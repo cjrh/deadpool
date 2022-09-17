@@ -1,3 +1,9 @@
+"""
+Deadpool
+========
+
+
+"""
 import os
 import signal
 import multiprocessing as mp
@@ -11,6 +17,9 @@ _T = typing.TypeVar('_T')
 _P = typing.ParamSpec('_P')
 
 import psutil
+
+
+__version__ = "0.0.1"
 
 
 class Future(CFFuture):
