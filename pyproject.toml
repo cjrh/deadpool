@@ -31,10 +31,12 @@ Source = "https://github.com/cjrh/deadpool"
 [tool.flit.module]
 name = "deadpool"
 
+[tool.flit.sdist]
+exclude = [".github/", ".gitignore"]
+
 [project.optional-dependencies]
 test = [
     "pytest >= 7",
     "pytest-cov",
     "flake8"
 ]
-

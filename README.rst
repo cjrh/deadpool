@@ -30,7 +30,7 @@
 
 
 deadpool
-======================
+========
 
 ``Deadpool`` is a process pool that is really hard to kill.
 
@@ -83,32 +83,32 @@ standard ``Executor``
 abstract interface. However, it differs in the following
 ways:
 - ``Deadpool`` makes a new subprocess for every task submitted to
-  the pool. It is like having ``max_tasks_per_child == 1``.
+the pool. It is like having ``max_tasks_per_child == 1``.
 - ``Deadpool`` does not keep a pool of processes around indefinitely.
-  There will only be as many concurrent processes running as there
-  is work to be done, up to the limit set by the ``max_workers``
-  parameter; but if there are fewer tasks to be executed, there will
-  be fewer active subprocesses. When there are no pending or active
-  tasks, there will be *no subprocesses present*. They are created
-  on demand as necessary and disappear when not required.
+There will only be as many concurrent processes running as there
+is work to be done, up to the limit set by the ``max_workers``
+parameter; but if there are fewer tasks to be executed, there will
+be fewer active subprocesses. When there are no pending or active
+tasks, there will be *no subprocesses present*. They are created
+on demand as necessary and disappear when not required.
 - ``Deadpool`` tasks have timeouts. When a task hits the timeout,
-  the underlying subprocess in the pool is killed with ``SIGKILL``.
+the underlying subprocess in the pool is killed with ``SIGKILL``.
 - If a ``Deadpool`` subprocess in the pool is killed by some
-  external actor, for example, the OS runs out of memory and the
-  OOM killer kills a pool subprocess that is using a lot of memory,
-  ``Deadpool`` does not care and further operation is unaffected.
-  ``Deadpool`` *cannot raise ``BrokenProcessPool`` or
-  ``BrokenExecutor``*.
+external actor, for example, the OS runs out of memory and the
+OOM killer kills a pool subprocess that is using a lot of memory,
+``Deadpool`` does not care and further operation is unaffected.
+``Deadpool`` *cannot raise ``BrokenProcessPool`` or
+``BrokenExecutor``*.
 - ``Deadpool`` also allows a ``finalizer``, with corresponding
-  ``finalargs``, that will be called after a task is executed on
-  a subprocess, but before the subprocess terminates. It is
-  analogous to the ``initializer`` and ``initargs`` parameters.
-  Just like the ``initializer`` callable, the ``finalizer``
-  callable is executed inside the subprocess.
+``finalargs``, that will be called after a task is executed on
+a subprocess, but before the subprocess terminates. It is
+analogous to the ``initializer`` and ``initargs`` parameters.
+Just like the ``initializer`` callable, the ``finalizer``
+callable is executed inside the subprocess.
 - ``Deadpool`` currently only works on Linux.
 - ``Deadpool`` defaults to the ``forkserver`` multiprocessing
-  context, unlike the stdlib pool which defaults to ``fork`` on
-  Linux.
+context, unlike the stdlib pool which defaults to ``fork`` on
+Linux.
 
 Show me some code
 -----------------
