@@ -18,7 +18,7 @@ from typing import Callable, Optional
 import psutil
 
 
-__version__ = "2022.9.1"
+__version__ = "2022.9.2"
 
 
 class Future(concurrent.futures.Future):
