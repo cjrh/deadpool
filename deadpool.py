@@ -8,7 +8,8 @@ import os
 import signal
 import multiprocessing as mp
 from multiprocessing.connection import Connection
-from concurrent.futures import Executor, Future as CFFuture, TimeoutError
+import concurrent.futures
+from concurrent.futures import Executor, Future as CFFuture, TimeoutError as CFTimeoutError
 import threading
 import typing
 from queue import Queue, Empty
@@ -20,10 +21,18 @@ import psutil
 __version__ = "0.0.1"
 
 
-class Future(CFFuture):
+class Future(concurrent.futures.Future):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.pid: Optional[int] = None
+
+
+class TimeoutError(concurrent.futures.TimeoutError):
+    ...
+
+
+class ProcessError(mp.ProcessError):
+    ...
 
 
 class Deadpool(Executor):
@@ -35,8 +44,8 @@ class Deadpool(Executor):
         initializer=None,
         initargs=(),
 
-        finitializer=None,
-        finitargs=(),
+        finalizer=None,
+        finalargs=(),
     ) -> None:
         super().__init__()
 
@@ -49,8 +58,8 @@ class Deadpool(Executor):
         self.ctx = mp_context
         self.initializer = initializer
         self.initargs = initargs
-        self.finitializer = finitializer
-        self.finitargs = finitargs
+        self.finitializer = finalizer
+        self.finitargs = finalargs
         self.pool_size = max_workers or len(os.sched_getaffinity(0))
         self.submitted_jobs = Queue(maxsize=100)
         self.running_jobs = Queue(maxsize=self.pool_size)
@@ -114,7 +123,7 @@ class Deadpool(Executor):
                     # Loop will read this data into conn_received on
                     # next pass.
                     print(msg)
-                    conn_sender.send(mp.ProcessError(msg))
+                    conn_sender.send(ProcessError(msg))
 
             if isinstance(results, BaseException):
                 fut.set_exception(results)
