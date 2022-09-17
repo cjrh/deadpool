@@ -34,17 +34,12 @@ deadpool
 
 ``Deadpool`` is a process pool that is really hard to kill.
 
-.. raw:: html
-
-    <div style="width: 80%; border: 2px solid grey; border-radius: 5px; margin: 0px auto; padding: 5px;">
-        <p>Note</p>
-        <p style="font-size: 0.8rem;">
-           The python package name is <em>deadpool-executor</em>, so to install
-           you must type <code>$ pip install deadpool-executor</code>. The import
-           name is <em>deadpool</em>, so in your Python code you must type
-           <code>import deadpool</code> to use it.
-        </p>
-    </div>
++-------------------------------------------------------------------------+
+| The python package name is *deadpool-executor*, so to install           |
+| you must type ``$ pip install deadpool-executor``. The import           |
+| name is *deadpool*, so in your Python code you must type                |
+| ``import deadpool`` to use it.                                          |
++-------------------------------------------------------------------------+
 
 ``Deadpool`` is an implementation of the ``Executor`` interface
 in the ``concurrent.futures`` standard library. ``Deadpool`` is
