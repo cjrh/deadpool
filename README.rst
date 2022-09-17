@@ -10,8 +10,8 @@
 .. image:: https://img.shields.io/github/tag/cjrh/deadpool.svg
     :target: https://img.shields.io/github/tag/cjrh/deadpool.svg
 
-.. image:: https://img.shields.io/badge/install-pip%20install%20deadpool_executor-ff69b4.svg
-    :target: https://img.shields.io/badge/install-pip%20install%20deadpool_executor-ff69b4.svg
+.. image:: https://img.shields.io/badge/install-pip%20install%20deadpool--executor-ff69b4.svg
+    :target: https://img.shields.io/badge/install-pip%20install%20deadpool--executor-ff69b4.svg
 
 .. image:: https://img.shields.io/pypi/v/deadpool-executor.svg
     :target: https://pypi.org/project/deadpool-executor/
