@@ -1,0 +1,12 @@
+[build-system]
+requires = ["flit_core >=3.2,<4"]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "deadpool"
+authors = [{name = "Caleb Hattingh", email = "caleb.hattingh@gmail.com"}]
+dynamic = ["version", "description"]
+dependencies = ["psutil"]
+
+[project.urls]
+Home = "https://github.com/cjrh/deadpool"
