@@ -1,9 +1,8 @@
-from multiprocessing import ProcessError
 import os
 import signal
 from contextlib import contextmanager
 import time
-from concurrent.futures import CancelledError, TimeoutError, as_completed
+from concurrent.futures import CancelledError, as_completed
 
 import pytest
 
@@ -54,8 +53,8 @@ def test_simple_init(raises):
     with deadpool.Deadpool(
         initializer=init,
         initargs=(1, raises),
-        finitializer=finit,
-        finitargs=(3, raises),
+        finalizer=finit,
+        finalargs=(3, raises),
     ) as exe:
         fut = exe.submit(f)
         result = fut.result()
@@ -69,7 +68,7 @@ def test_timeout():
         with deadpool.Deadpool() as exe:
             fut = exe.submit(t, timeout=1.0)
 
-            with pytest.raises(TimeoutError):
+            with pytest.raises(deadpool.TimeoutError):
                 fut.result()
 
 
@@ -94,7 +93,7 @@ def ac(t0, duration=0.01):
 def test_throttle_as_completed():
     with deadpool.Deadpool(max_workers=2) as exe:
         t0 = time.perf_counter()
-        futs = [exe.submit(ac, t0) for i in range(20)]
+        futs = [exe.submit(ac, t0) for _ in range(20)]
         results = [f"{f.result() * 1000 // 10:.0f}" for f in as_completed(futs)]
 
     print(results)
@@ -126,11 +125,12 @@ def test_kill(sig):
         f2 = exe.submit(k, 1)
         time.sleep(0.5)
         print(f"{f1.pid=}")
+        assert f1.pid
         os.kill(f1.pid, sig)
         exe.submit(k, 1)
         exe.submit(k, 1)
 
-        with pytest.raises(ProcessError):
+        with pytest.raises(deadpool.ProcessError):
             f1.result()
 
         assert f2.result() == 1
