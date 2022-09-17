@@ -3,10 +3,25 @@ requires = ["flit_core >=3.2,<4"]
 build-backend = "flit_core.buildapi"
 
 [project]
-name = "deadpool"
+name = "deadpool-executor"
 authors = [{name = "Caleb Hattingh", email = "caleb.hattingh@gmail.com"}]
 dynamic = ["version", "description"]
-dependencies = ["psutil"]
+dependencies = [
+    "psutil",
+]
 
 [project.urls]
 Home = "https://github.com/cjrh/deadpool"
+Documentation = "https://github.com/cjrh/deadpool"
+Source = "https://github.com/cjrh/deadpool"
+
+[tool.flit.module]
+name = "deadpool"
+
+[project.optional-dependencies]
+test = [
+    "pytest >= 7",
+    "pytest-cov",
+    "flake8"
+]
+
