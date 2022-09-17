@@ -35,6 +35,35 @@ def test_simple():
     assert result == 123
 
 
+def init(x, error=False):
+    if error:
+        raise Exception(f"{x}")
+    else:
+        print(x)
+
+
+def finit(x, error=False):
+    if error:
+        raise Exception(f"{x}")
+    else:
+        print(x)
+
+
+@pytest.mark.parametrize('raises', [False, True])
+def test_simple_init(raises):
+    with deadpool.Deadpool(
+        initializer=init,
+        initargs=(1, raises),
+        finitializer=finit,
+        finitargs=(3, raises),
+    ) as exe:
+        fut = exe.submit(f)
+        result = fut.result()
+
+    print('got result:', result)
+    assert result == 123
+
+
 def test_timeout():
     with elapsed():
         with deadpool.Deadpool() as exe:
