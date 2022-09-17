@@ -13,8 +13,6 @@ import threading
 import typing
 from queue import Queue, Empty
 from typing import Callable, Optional
-_T = typing.TypeVar('_T')
-_P = typing.ParamSpec('_P')
 
 import psutil
 
@@ -131,9 +129,9 @@ class Deadpool(Executor):
             except Empty:  # pragma: no cover
                 print(f"Weird error, did not expect running jobs to be empty")
 
-    def submit(self, __fn: Callable[_P, _T], *args: _P.args, timeout=None, **kwargs: _P.kwargs) -> Future[_T]:
+    def submit(self, __fn: Callable, *args, timeout=None, **kwargs) -> Future:
         fut = Future()
-        self.submitted_jobs.put_nowait((__fn, args, kwargs, timeout, fut))
+        self.submitted_jobs.put((__fn, args, kwargs, timeout, fut))
         return fut
 
     def shutdown(self, wait: bool = ..., *, cancel_futures: bool = ...) -> None:
