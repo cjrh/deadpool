@@ -1,11 +1,11 @@
 .. image:: https://github.com/cjrh/deadpool/workflows/Python%20application/badge.svg
     :target: https://github.com/cjrh/deadpool/actions
 
-.. image:: https://coveralls.io/repos/github/cjrh/deadpool/badge.svg?branch=master
-    :target: https://coveralls.io/github/cjrh/deadpool?branch=master
+.. image:: https://coveralls.io/repos/github/cjrh/deadpool/badge.svg?branch=main
+    :target: https://coveralls.io/github/cjrh/deadpool?branch=main
 
-.. image:: https://img.shields.io/pypi/pyversions/deadpool.svg
-    :target: https://pypi.python.org/pypi/deadpool
+.. image:: https://img.shields.io/pypi/pyversions/deadpool-executor.svg
+    :target: https://pypi.python.org/pypi/deadpool-executor
 
 .. image:: https://img.shields.io/github/tag/cjrh/deadpool.svg
     :target: https://img.shields.io/github/tag/cjrh/deadpool.svg
@@ -13,16 +13,16 @@
 .. image:: https://img.shields.io/badge/install-pip%20install%20deadpool_executor-ff69b4.svg
     :target: https://img.shields.io/badge/install-pip%20install%20deadpool_executor-ff69b4.svg
 
-.. image:: https://img.shields.io/pypi/v/deadpool.svg
-    :target: https://pypi.org/project/deadpool/
+.. image:: https://img.shields.io/pypi/v/deadpool-executor.svg
+    :target: https://pypi.org/project/deadpool-executor/
 
 .. image:: https://img.shields.io/badge/calver-YYYY.MM.MINOR-22bfda.svg
     :alt: This project uses calendar-based versioning scheme
     :target: http://calver.org/
 
-.. image:: https://pepy.tech/badge/deadpool
+.. image:: https://pepy.tech/badge/deadpool-executor
     :alt: Downloads
-    :target: https://pepy.tech/project/deadpool
+    :target: https://pepy.tech/project/deadpool-executor
 
 .. image:: https://img.shields.io/badge/code%20style-black-000000.svg
     :alt: This project uses the "black" style formatter for Python code
