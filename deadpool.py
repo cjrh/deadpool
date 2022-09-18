@@ -14,17 +14,36 @@ import threading
 import typing
 from queue import Queue, Empty
 from typing import Callable, Optional
+import logging
 
 import psutil
 
 
 __version__ = "2022.9.2"
+logger = logging.getLogger(__name__)
 
 
 class Future(concurrent.futures.Future):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self.pid: Optional[int] = None
+        self._pid: Optional[int] = None
+        self.pid_callback = None
+
+    @property
+    def pid(self):
+        return self._pid
+
+    @pid.setter
+    def pid(self, value):
+        self._pid = value
+        if self.pid_callback:
+            try:
+                self.pid_callback(self._pid)
+            except Exception:  # pragma: no cover
+                logger.exception(f"Error calling pid_callback")
+
+    def add_pid_callback(self, fn):
+        self.pid_callback = fn
 
 
 class TimeoutError(concurrent.futures.TimeoutError):
@@ -32,6 +51,10 @@ class TimeoutError(concurrent.futures.TimeoutError):
 
 
 class ProcessError(mp.ProcessError):
+    ...
+
+
+class PoolClosed(Exception):
     ...
 
 
@@ -63,10 +86,11 @@ class Deadpool(Executor):
         self.pool_size = max_workers or len(os.sched_getaffinity(0))
         self.submitted_jobs = Queue(maxsize=100)
         self.running_jobs = Queue(maxsize=self.pool_size)
+        self.closed = False
 
     def runner(self):
         while job := self.submitted_jobs.get():
-            # Need permission from the pool size to proceed
+            # This will block if the queue of running jobs is max size.
             self.running_jobs.put(None)
             t = threading.Thread(
                 target=self.run_process,
@@ -97,7 +121,7 @@ class Deadpool(Executor):
             fut.pid = p.pid
 
             def timed_out():
-                print('timed out, killing process')
+                logger.debug(f'Process {p} timed out, killing process')
                 kill_proc_tree(p.pid, sig=signal.SIGKILL)
                 conn_sender.send(TimeoutError())
 
@@ -136,20 +160,25 @@ class Deadpool(Executor):
             try:
                 self.running_jobs.get_nowait()
             except Empty:  # pragma: no cover
-                print(f"Weird error, did not expect running jobs to be empty")
+                logger.warning(f"Weird error, did not expect running jobs to be empty")
 
     def submit(self, __fn: Callable, *args, timeout=None, **kwargs) -> Future:
+        if self.closed:
+            raise PoolClosed("The pool is closed. No more tasks can be submitted.")
+
         fut = Future()
         self.submitted_jobs.put((__fn, args, kwargs, timeout, fut))
         return fut
 
     def shutdown(self, wait: bool = ..., *, cancel_futures: bool = ...) -> None:
+        self.closed = True
         self.submitted_jobs.put_nowait(None)
-        self.submitted_jobs.join()
+        if wait:
+            self.submitted_jobs.join()
         return super().shutdown(wait, cancel_futures=cancel_futures)
 
     def __enter__(self):
-        self.runner_thread = threading.Thread(target=self.runner)
+        self.runner_thread = threading.Thread(target=self.runner, daemon=True)
         self.runner_thread.start()
         return self
 

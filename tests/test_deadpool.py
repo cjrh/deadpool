@@ -33,6 +33,11 @@ def test_simple():
     print('got result:', result)
     assert result == 123
 
+    # Outside the context manager, no new tasks
+    # can be submitted.
+    with pytest.raises(deadpool.PoolClosed):
+        exe.submit(f)
+
 
 def init(x, error=False):
     if error:
@@ -112,9 +117,7 @@ def test_map():
 
 
 def k(duration=1):
-    print('hi')
     time.sleep(duration)
-    print('hi2')
     return duration
 
 
@@ -134,6 +137,20 @@ def test_kill(sig):
             f1.result()
 
         assert f2.result() == 1
+
+
+def test_pid_callback():
+    collector = []
+
+    with deadpool.Deadpool(max_workers=5) as exe:
+        f1 = exe.submit(k, 1)
+
+        def pid_callback(pid: int):
+            collector.append(pid)
+
+        f1.add_pid_callback(pid_callback)
+
+    assert collector and isinstance(collector[0], int)
 
 
 @contextmanager
