@@ -92,11 +92,14 @@ tasks in subprocesses, and implements the standard ``Executor`` abstract
 interface. However, it differs in the following ways:
 
 - ``Deadpool`` makes a new subprocess for every task submitted to
-  the pool. It is like having ``max_tasks_per_child == 1`` (a new feature in
+  the pool (up to the ``max_workers`` limit). It is like having
+  ``max_tasks_per_child == 1`` (a new feature in
   Python 3.11, although it was available in `multiprocessing.Pool`_
   since Python 3.2). I have ideas about making this configurable, but
   for now this is a much less important than overall resilience of
-  the pool.
+  the pool. This also means that ``Deadpool`` doesn't suffer from
+  long-lived subprocesses being affected by memory leaks, usually
+  created by native extensions.
 - ``Deadpool`` does not keep a pool of processes around indefinitely.
   There will only be as many concurrent processes running as there
   is work to be done, up to the limit set by the ``max_workers``
