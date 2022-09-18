@@ -146,7 +146,7 @@ class Deadpool(Executor):
                     )
                     # Loop will read this data into conn_received on
                     # next pass.
-                    print(msg)
+                    logger.error(msg)
                     conn_sender.send(ProcessError(msg))
 
             if isinstance(results, BaseException):
@@ -193,7 +193,7 @@ def raw_runner(conn: Connection, fn, args, kwargs, initializer, initargs, finiti
         try:
             initializer(*initargs)
         except:
-            print(f"Initializer failed")
+            logger.exception(f"Initializer failed")
 
     try:
         results = fn(*args, **kwargs)
@@ -208,7 +208,7 @@ def raw_runner(conn: Connection, fn, args, kwargs, initializer, initargs, finiti
             try:
                 finitializer(*finitargs)
             except:
-                print(f"Finitializer failed")
+                logger.exception(f"Finitializer failed")
 
 
 # Taken fromhttps
