@@ -165,4 +165,3 @@ def elapsed():
     finally:
         t1 = time.perf_counter()
         print(f"elapsed: {t1 - t0:.4g} sec")
-
