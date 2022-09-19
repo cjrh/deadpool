@@ -54,6 +54,7 @@ jobs:
       env:
         COVERALLS_REPO_TOKEN: "${{ secrets.COVERALLS_REPO_TOKEN }}"
         COVERALLS_PARALLEL: "true"
+        GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
       run: |
         pip install coveralls
         coveralls
@@ -61,6 +62,6 @@ jobs:
     - name: Finish parallel coverage
       if: matrix.os == 'ubuntu-latest'
       env:
-          GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+        GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
       run: |
         coveralls --finish
