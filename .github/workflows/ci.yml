@@ -103,25 +103,30 @@ jobs:
         sarif_file: 'trivy-results.sarif'
 
   semgrep:
-    name: semgrep
+    permissions:
+      contents: read  # for actions/checkout to fetch code
+      pull-requests: write  # for semgrep to add comments in pull request
+    name: semgrep-scan
     runs-on: ubuntu-latest
     needs: dependency-scan
-    if: (github.actor != 'dependabot[bot]')
-    steps:
-      - name: Harden Runner
-        uses: step-security/harden-runner@dd2c410b088af7c0dc8046f3ac9a8f4148492a95
-        with:
-          egress-policy: block
-          allowed-endpoints: >
-            github.com:443
-            metrics.semgrep.dev:443
-            semgrep.dev:443
-            api.snapcraft.io:443
+    container:
+      image: returntocorp/semgrep
+    if: github.actor != 'dependabot[bot]'
 
-      - uses: actions/checkout@61b9e3751b92087fd0b06925ba6dd6314e06f089 # v2
-      - uses: returntocorp/semgrep-action@ac2d55bcac98ec525c9e051df6f7360b3fb266f1 # v1
-        with:
-          publishToken: ${{ secrets.SEMGREP_APP_TOKEN }}
+    steps:
+    - name: Harden Runner
+      uses: step-security/harden-runner@dd2c410b088af7c0dc8046f3ac9a8f4148492a95
+      with:
+        egress-policy: audit # TODO: change to 'egress-policy: block' after couple of runs
+
+    - name: Checkout the code
+      uses: actions/checkout@2541b1294d2704b0964813337f33b291d3f8596b # v3.0.2
+      with:
+        fetch-depth: 0
+
+    - run: semgrep ci || true
+      env:
+        SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
 
   analyze:
     name: Analyze
