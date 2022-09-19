@@ -28,7 +28,7 @@
     :alt: This project uses the "black" style formatter for Python code
     :target: https://github.com/python/black
 
-.. image:: https://api.securityscorecards.dev/projects/github.com/cjh/deadpool/badge
+.. image:: https://api.securityscorecards.dev/projects/github.com/cjrh/deadpool/badge
     :alt: OpenSSF Scorecard
     :target: https://api.securityscorecards.dev/projects/github.com/cjrh/deadpool
 
