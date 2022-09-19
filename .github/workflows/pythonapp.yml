@@ -54,23 +54,18 @@ jobs:
       run: echo "##[set-output name=branch;]$(echo ${GITHUB_REF#refs/heads/})"
       id: extract_branch
 
-    - name: Coveralls
-      uses: coverallsapp/github-action@master
-      with:
-        github-token: ${{ secrets.github_token }}
-        parallel: true
-        flag-name: 'Unit Test ${{ matrix.python-version }}'
+    - name: Upload coverage
+      if: matrix.os == 'ubuntu-latest'
+      env:
+        COVERALLS_REPO_TOKEN: "${{ secrets.COVERALLS_REPO_TOKEN }}"
+        COVERALLS_PARALLEL: "true"
+      run: |
+        pip install coveralls
+        coveralls
 
-  coveralls_finish:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-    - name: Harden Runner
-      uses: step-security/harden-runner@dd2c410b088af7c0dc8046f3ac9a8f4148492a95
-      with:
-        egress-policy: audit # TODO: change to 'egress-policy: block' after couple of runs
-
-    - name: Coveralls Finished
-      uses: coverallsapp/github-action@master
-      with:
-        parallel-finished: true
+    - name: Finish parallel coverage
+      if: matrix.os == 'ubuntu-latest'
+      env:
+        GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+      run: |
+        coveralls --finish
