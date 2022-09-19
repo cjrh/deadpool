@@ -211,7 +211,7 @@ def raw_runner(conn: Connection, fn, args, kwargs, initializer, initargs, finiti
                 logger.exception(f"Finitializer failed")
 
 
-# Taken fromhttps
+# Taken from
 # https://psutil.readthedocs.io/en/latest/index.html?highlight=children#kill-process-tree
 def kill_proc_tree(pid, sig=signal.SIGTERM, include_parent=True,
                    timeout=None, on_terminate=None):  # pragma: no cover

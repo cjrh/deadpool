@@ -19,9 +19,18 @@ jobs:
       fail-fast: false
     timeout-minutes: 5
     steps:
-    - uses: actions/checkout@v3
+    - name: Harden Runner
+      uses: step-security/harden-runner@dd2c410b088af7c0dc8046f3ac9a8f4148492a95
+      with:
+        egress-policy: audit # TODO: change to 'egress-policy: block' after couple of runs
+
+    - name: "Checkout code"
+      uses: actions/checkout@a12a3943b4bdde767164f792f33f40b04645d846 # tag=v3.0.0
+      with:
+        persist-credentials: false
+
     - name: Set up Python
-      uses: actions/setup-python@v3
+      uses: actions/setup-python@98f2ad02fd48d057ee3b4d4f66525b231c3e52b6
       with:
         python-version: ${{ matrix.python-version }}
         architecture: x64
