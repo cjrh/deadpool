@@ -30,7 +30,7 @@ def test_simple():
         fut = exe.submit(f)
         result = fut.result()
 
-    print('got result:', result)
+    print("got result:", result)
     assert result == 123
 
     # Outside the context manager, no new tasks
@@ -53,7 +53,7 @@ def finit(x, error=False):
         print(x)
 
 
-@pytest.mark.parametrize('raises', [False, True])
+@pytest.mark.parametrize("raises", [False, True])
 def test_simple_init(raises):
     with deadpool.Deadpool(
         initializer=init,
@@ -64,7 +64,7 @@ def test_simple_init(raises):
         fut = exe.submit(f)
         result = fut.result()
 
-    print('got result:', result)
+    print("got result:", result)
     assert result == 123
 
 
@@ -77,17 +77,21 @@ def test_timeout():
                 fut.result()
 
 
-@pytest.mark.parametrize('exc_type', [
-    Exception,
-    CancelledError,
-    BaseException,
-])
+@pytest.mark.parametrize(
+    "exc_type",
+    [
+        Exception,
+        CancelledError,
+        BaseException,
+    ],
+)
 def test_exception(exc_type):
     with deadpool.Deadpool() as exe:
         fut = exe.submit(f_err, exc_type)
 
         with pytest.raises(exc_type):
             fut.result()
+
 
 def ac(t0, duration=0.01):
     t1 = time.perf_counter()
@@ -121,7 +125,7 @@ def k(duration=1):
     return duration
 
 
-@pytest.mark.parametrize('sig', [signal.SIGTERM, signal.SIGKILL])
+@pytest.mark.parametrize("sig", [signal.SIGTERM, signal.SIGKILL])
 def test_kill(sig):
     with deadpool.Deadpool(max_workers=5) as exe:
         f1 = exe.submit(k, 3)
@@ -160,5 +164,4 @@ def elapsed():
         yield
     finally:
         t1 = time.perf_counter()
-        print(f'elapsed: {t1 - t0:.4g} sec')
-
+        print(f"elapsed: {t1 - t0:.4g} sec")

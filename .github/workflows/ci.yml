@@ -1,0 +1,163 @@
+name: ci
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    needs: dependency-scan
+    timeout-minutes: 25
+    strategy:
+      fail-fast: true
+      max-parallel: 4
+
+    permissions:
+      contents: 'read'
+
+    steps:
+    - name: Harden Runner
+      uses: step-security/harden-runner@dd2c410b088af7c0dc8046f3ac9a8f4148492a95 # v1
+      with:
+        egress-policy: block
+        disable-telemetry: true
+        allowed-endpoints: >
+          api.github.com:443
+          dl.google.com:443
+          files.pythonhosted.org:443
+          github.com:443
+          oauth2.googleapis.com:443
+          objects.githubusercontent.com:443
+          pypi.org:443
+          raw.githubusercontent.com:443
+          storage.googleapis.com:443
+          y2oiacprodeus2file6.blob.core.windows.net:443  # cache builds
+
+    - uses: actions/checkout@2541b1294d2704b0964813337f33b291d3f8596b
+      with:
+        fetch-depth: 0
+
+    - uses: psf/black@stable
+
+  dependency-scan:
+    permissions:
+      # Needed to upload the results to code-scanning dashboard.
+      security-events: write
+      contents: read # for actions/checkout to fetch code
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Harden Runner
+      uses: step-security/harden-runner@dd2c410b088af7c0dc8046f3ac9a8f4148492a95
+      with:
+        egress-policy: block
+        allowed-endpoints: >
+          api.github.com:443
+          ghcr.io:443
+          github.com:443
+          pkg-containers.githubusercontent.com:443
+
+    - name: Checkout the code
+      uses: actions/checkout@2541b1294d2704b0964813337f33b291d3f8596b # v2
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+
+    - name: Run vulnerability scanner in repo mode
+      if: github.actor != 'dependabot[bot]'
+      uses: aquasecurity/trivy-action@d63413b0a4a4482237085319f7f4a1ce99a8f2ac # 0.2.2
+      with:
+        scan-type: 'fs'
+        format: 'sarif'
+        vuln-type: 'library'
+        severity: 'HIGH,CRITICAL'
+        security-checks: 'vuln,config,secret'
+        output: 'trivy-results.sarif'
+
+    - name: Run vulnerability scanner in repo mode
+      if: github.actor == 'dependabot[bot]'
+      uses: aquasecurity/trivy-action@d63413b0a4a4482237085319f7f4a1ce99a8f2ac # 0.2.2
+      with:
+        scan-type: 'fs'
+        exit-code: 1
+        format: 'sarif'
+        vuln-type: 'library'
+        severity: 'MEDIUM,HIGH,CRITICAL'
+        security-checks: 'vuln,config,secret'
+        output: 'trivy-results.sarif'
+
+    - name: Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@b398f525a5587552e573b247ac661067fafa920b # v1
+      if: always()
+      with:
+        sarif_file: 'trivy-results.sarif'
+
+  semgrep:
+    permissions:
+      contents: read  # for actions/checkout to fetch code
+      pull-requests: write  # for semgrep to add comments in pull request
+    name: semgrep-scan
+    runs-on: ubuntu-latest
+    needs: dependency-scan
+    container:
+      image: returntocorp/semgrep
+    if: github.actor != 'dependabot[bot]'
+
+    steps:
+    - name: Harden Runner
+      uses: step-security/harden-runner@dd2c410b088af7c0dc8046f3ac9a8f4148492a95
+      with:
+        egress-policy: audit # TODO: change to 'egress-policy: block' after couple of runs
+
+    - name: Checkout the code
+      uses: actions/checkout@2541b1294d2704b0964813337f33b291d3f8596b # v3.0.2
+      with:
+        fetch-depth: 0
+
+    - run: semgrep ci || true
+      env:
+        SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+
+  analyze:
+    name: Analyze
+    runs-on: ubuntu-latest
+    needs: dependency-scan
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [ 'python' ]
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    # Initializes the CodeQL tools for scanning.
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v2
+      with:
+        languages: ${{ matrix.language }}
+
+    # Autobuild attempts to build any compiled languages  (C/C++, C#, or Java).
+    # If this step fails, then you should remove it and run the build manually (see below)
+    - name: Autobuild
+      uses: github/codeql-action/autobuild@v2
+
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v2
+      with:
+        category: "/language:${{matrix.language}}"

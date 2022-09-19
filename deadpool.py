@@ -9,7 +9,11 @@ import signal
 import multiprocessing as mp
 from multiprocessing.connection import Connection
 import concurrent.futures
-from concurrent.futures import Executor, Future as CFFuture, TimeoutError as CFTimeoutError
+from concurrent.futures import (
+    Executor,
+    Future as CFFuture,
+    TimeoutError as CFTimeoutError,
+)
 import threading
 import typing
 from queue import Queue, Empty
@@ -63,17 +67,15 @@ class Deadpool(Executor):
         self,
         max_workers: Optional[int] = None,
         mp_context=None,
-
         initializer=None,
         initargs=(),
-
         finalizer=None,
         finalargs=(),
     ) -> None:
         super().__init__()
 
         if not mp_context:
-            mp_context = 'forkserver'
+            mp_context = "forkserver"
 
         if isinstance(mp_context, str):
             mp_context = mp.get_context(mp_context)
@@ -121,7 +123,7 @@ class Deadpool(Executor):
             fut.pid = p.pid
 
             def timed_out():
-                logger.debug(f'Process {p} timed out, killing process')
+                logger.debug(f"Process {p} timed out, killing process")
                 kill_proc_tree(p.pid, sig=signal.SIGKILL)
                 conn_sender.send(TimeoutError())
 
@@ -188,7 +190,9 @@ class Deadpool(Executor):
         return False
 
 
-def raw_runner(conn: Connection, fn, args, kwargs, initializer, initargs, finitializer, finitargs):
+def raw_runner(
+    conn: Connection, fn, args, kwargs, initializer, initargs, finitializer, finitargs
+):
     if initializer:
         try:
             initializer(*initargs)
@@ -211,10 +215,11 @@ def raw_runner(conn: Connection, fn, args, kwargs, initializer, initargs, finiti
                 logger.exception(f"Finitializer failed")
 
 
-# Taken fromhttps
+# Taken from
 # https://psutil.readthedocs.io/en/latest/index.html?highlight=children#kill-process-tree
-def kill_proc_tree(pid, sig=signal.SIGTERM, include_parent=True,
-                   timeout=None, on_terminate=None):  # pragma: no cover
+def kill_proc_tree(
+    pid, sig=signal.SIGTERM, include_parent=True, timeout=None, on_terminate=None
+):  # pragma: no cover
     """Kill a process tree (including grandchildren) with signal
     "sig" and return a (gone, still_alive) tuple.
     "on_terminate", if specified, is a callback function which is
@@ -234,6 +239,5 @@ def kill_proc_tree(pid, sig=signal.SIGTERM, include_parent=True,
         except psutil.NoSuchProcess:
             pass
 
-    gone, alive = psutil.wait_procs(children, timeout=timeout,
-                                    callback=on_terminate)
+    gone, alive = psutil.wait_procs(children, timeout=timeout, callback=on_terminate)
     return (gone, alive)

@@ -28,6 +28,9 @@ Home = "https://github.com/cjrh/deadpool"
 Documentation = "https://github.com/cjrh/deadpool"
 Source = "https://github.com/cjrh/deadpool"
 
+[tool.coverage.run]
+relative_files = true
+
 [tool.flit.module]
 name = "deadpool"
 
@@ -38,5 +41,6 @@ exclude = [".github/", ".gitignore"]
 test = [
     "pytest >= 7",
     "pytest-cov",
-    "flake8"
+    "flake8",
+    "coverage[toml]"
 ]
