@@ -29,6 +29,7 @@ jobs:
           pypi.org:443
           api.github.com:443
           coveralls.io:443
+          objects.githubusercontent.com:443
 
     - name: "Checkout code"
       uses: actions/checkout@a12a3943b4bdde767164f792f33f40b04645d846 # tag=v3.0.0
@@ -55,7 +56,7 @@ jobs:
       uses: AndreMiras/coveralls-python-action@develop
       with:
         parallel: true
-        flag-name: Unit Test
+        flag-name: 'Unit Test ${{ matrix.python-version }}'
 
 
   coveralls_finish:
