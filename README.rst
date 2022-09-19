@@ -30,7 +30,7 @@
 
 .. image:: https://api.securityscorecards.dev/projects/github.com/cjh/deadpool/badge
     :alt: OpenSSF Scorecard
-    :target: https://api.securityscorecards.dev/projects/github.com/cjh/deadpool
+    :target: https://api.securityscorecards.dev/projects/github.com/cjrh/deadpool
 
 deadpool
 ========
