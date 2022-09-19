@@ -55,7 +55,7 @@ jobs:
       id: extract_branch
 
     - name: Coveralls
-      uses: AndreMiras/coveralls-python-action@e1472ad16cc1c4455205c5718933622e25288cfe
+      uses: coverallsapp/github-action@master
       with:
         parallel: true
         flag-name: 'Unit Test ${{ matrix.python-version }}'
@@ -70,6 +70,6 @@ jobs:
         egress-policy: audit # TODO: change to 'egress-policy: block' after couple of runs
 
     - name: Coveralls Finished
-      uses: AndreMiras/coveralls-python-action@e1472ad16cc1c4455205c5718933622e25288cfe
+      uses: coverallsapp/github-action@master
       with:
         parallel-finished: true
