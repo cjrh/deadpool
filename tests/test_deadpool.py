@@ -73,7 +73,7 @@ def test_timeout():
         with deadpool.Deadpool() as exe:
             fut = exe.submit(t, timeout=1.0)
 
-            with pytest.raises(deadpool.TimeoutError):
+            with pytest.raises(deadpool.TimeoutError, match="timed out"):
                 fut.result()
 
 
@@ -157,6 +157,86 @@ def test_pid_callback():
     assert collector and isinstance(collector[0], int)
 
 
+def f_sub():
+    with deadpool.Deadpool() as exe:
+        fut = exe.submit(g_sub)
+        return fut.result()
+
+
+def g_sub():
+    with deadpool.Deadpool() as exe:
+        futs = exe.map(time.sleep, [55.0] * 10)
+
+    return 123
+
+
+def test_sub_sub_process():
+    with deadpool.Deadpool(max_workers=5) as exe:
+        f1 = exe.submit(f_sub)
+        time.sleep(0.5)
+        assert f1.pid
+        # Note: this doesn't kill the children, only the subprocess
+        # of the task itself. The children continue to run.
+        os.kill(f1.pid, signal.SIGKILL)
+        with pytest.raises(deadpool.ProcessError):
+            f1.result()
+
+
+class MyBadException(Exception):
+    def __init__(self, a, b, c):
+        self.a = a
+        self.b = b
+        self.c = c
+
+
+class MyBadExceptionSetState(Exception):
+    def __init__(self, a, b, c):
+        self.a = a
+        self.b = b
+        self.c = c
+
+    def __setstate__(self, d):
+        raise ValueError("I failed to unpickle")
+
+
+class MyBadExceptionReduce(Exception):
+    def __init__(self, a, b, c):
+        self.a = a
+        self.b = b
+        self.c = c
+
+    def __reduce__(self):
+        return None
+
+
+class MyBadExceptionReduceRaise(Exception):
+    def __init__(self, a, b, c):
+        self.a = a
+        self.b = b
+        self.c = c
+
+    def __reduce__(self):
+        raise ValueError("I failed to pickle")
+
+
+def raise_custom_exception(exc_class):
+    raise exc_class(1, 2, 3)
+
+
+@pytest.mark.parametrize('raises,exc_type,match', [
+    (MyBadException, MyBadException, "(1, 2, 3)"),
+    (MyBadExceptionSetState, ValueError, "failed to unpickle"),
+    (MyBadExceptionReduce, deadpool.ProcessError, "completed unexpectedly"),
+    (MyBadExceptionReduceRaise, deadpool.ProcessError, "completed unexpectedly"),
+])
+def test_bad_exception(raises, exc_type, match):
+    with deadpool.Deadpool() as exe:
+        fut = exe.submit(raise_custom_exception, raises)
+
+        with pytest.raises(exc_type, match=match):
+            result = fut.result()
+
+
 @contextmanager
 def elapsed():
     t0 = time.perf_counter()
@@ -165,3 +245,5 @@ def elapsed():
     finally:
         t1 = time.perf_counter()
         print(f"elapsed: {t1 - t0:.4g} sec")
+
+
