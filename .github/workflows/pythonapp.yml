@@ -47,7 +47,7 @@ jobs:
 
     - name: Test with pytest
       run: |
-        pytest --cov-report=xml --cov deadpool tests/ 
+        pytest --cov deadpool tests/
 
     - name: Extract branch name
       shell: bash
@@ -57,12 +57,12 @@ jobs:
     - name: Upload coverage
       if: matrix.os == 'ubuntu-latest'
       env:
-        GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+        # GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
         COVERALLS_REPO_TOKEN: "${{ secrets.COVERALLS_REPO_TOKEN }}"
         COVERALLS_PARALLEL: "true"
       run: |
         pip install coveralls
-        coveralls --service=github
+        coveralls
 
     - name: Finish parallel coverage
       if: matrix.os == 'ubuntu-latest'
