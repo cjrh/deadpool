@@ -62,7 +62,7 @@ jobs:
         COVERALLS_PARALLEL: "true"
       run: |
         pip install coveralls
-        coveralls --service=github
+        coveralls
 
     - name: Finish parallel coverage
       if: matrix.os == 'ubuntu-latest'
