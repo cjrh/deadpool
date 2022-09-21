@@ -286,7 +286,11 @@ def kill_proc_tree_in_process_daemon(pid, sig):  # pragma: no cover
 # Taken from
 # https://psutil.readthedocs.io/en/latest/index.html?highlight=children#kill-process-tree
 def kill_proc_tree(
-    pid, sig=signal.SIGTERM, include_parent=True, timeout=None, on_terminate=None,
+    pid,
+    sig=signal.SIGTERM,
+    include_parent=True,
+    timeout=None,
+    on_terminate=None,
     allow_kill_self=False,
 ):  # pragma: no cover
     """Kill a process tree (including grandchildren) with signal

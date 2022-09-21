@@ -223,12 +223,15 @@ def raise_custom_exception(exc_class):
     raise exc_class(1, 2, 3)
 
 
-@pytest.mark.parametrize('raises,exc_type,match', [
-    (MyBadException, MyBadException, "(1, 2, 3)"),
-    (MyBadExceptionSetState, ValueError, "failed to unpickle"),
-    (MyBadExceptionReduce, deadpool.ProcessError, "completed unexpectedly"),
-    (MyBadExceptionReduceRaise, deadpool.ProcessError, "completed unexpectedly"),
-])
+@pytest.mark.parametrize(
+    "raises,exc_type,match",
+    [
+        (MyBadException, MyBadException, "(1, 2, 3)"),
+        (MyBadExceptionSetState, ValueError, "failed to unpickle"),
+        (MyBadExceptionReduce, deadpool.ProcessError, "completed unexpectedly"),
+        (MyBadExceptionReduceRaise, deadpool.ProcessError, "completed unexpectedly"),
+    ],
+)
 def test_bad_exception(raises, exc_type, match):
     with deadpool.Deadpool() as exe:
         fut = exe.submit(raise_custom_exception, raises)
@@ -245,5 +248,3 @@ def elapsed():
     finally:
         t1 = time.perf_counter()
         print(f"elapsed: {t1 - t0:.4g} sec")
-
-
