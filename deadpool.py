@@ -19,7 +19,7 @@ import logging
 import psutil
 
 
-__version__ = "2022.9.2"
+__version__ = "2022.9.3"
 logger = logging.getLogger(__name__)
 
 
