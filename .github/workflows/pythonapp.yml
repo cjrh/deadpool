@@ -19,17 +19,17 @@ jobs:
       fail-fast: false
     timeout-minutes: 5
     steps:
-    # - name: Harden Runner
-    #   uses: step-security/harden-runner@dd2c410b088af7c0dc8046f3ac9a8f4148492a95
-    #   with:
-    #     egress-policy: block
-    #     allowed-endpoints: >
-    #       files.pythonhosted.org:443
-    #       github.com:443
-    #       pypi.org:443
-    #       api.github.com:443
-    #       coveralls.io:443
-    #       objects.githubusercontent.com:443
+    - name: Harden Runner
+      uses: step-security/harden-runner@dd2c410b088af7c0dc8046f3ac9a8f4148492a95
+      with:
+        egress-policy: block
+        allowed-endpoints: >
+          files.pythonhosted.org:443
+          github.com:443
+          pypi.org:443
+          api.github.com:443
+          coveralls.io:443
+          objects.githubusercontent.com:443
 
     - name: "Checkout code"
       uses: actions/checkout@a12a3943b4bdde767164f792f33f40b04645d846 # tag=v3.0.0
@@ -47,7 +47,7 @@ jobs:
 
     - name: Test with pytest
       run: |
-        pytest --cov-report=xml --cov deadpool tests/ 
+        pytest --cov deadpool tests/
 
     - name: Extract branch name
       shell: bash
