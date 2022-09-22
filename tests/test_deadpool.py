@@ -240,6 +240,15 @@ def test_bad_exception(raises, exc_type, match):
             result = fut.result()
 
 
+def test_cancel_and_kill():
+    with deadpool.Deadpool() as exe:
+        fut = exe.submit(t, 10)
+        time.sleep(0.5)
+        fut.cancel_and_kill_if_running()
+        with pytest.raises(deadpool.CancelledError):
+            fut.result()
+
+
 @contextmanager
 def elapsed():
     t0 = time.perf_counter()

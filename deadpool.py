@@ -10,7 +10,7 @@ import signal
 import multiprocessing as mp
 from multiprocessing.connection import Connection
 import concurrent.futures
-from concurrent.futures import Executor
+from concurrent.futures import Executor, CancelledError, as_completed, InvalidStateError
 import threading
 from queue import Queue, Empty, PriorityQueue
 from typing import Callable, Optional
@@ -23,6 +23,15 @@ import psutil
 
 
 __version__ = "2022.9.3"
+__all__ = [
+    "Deadpool",
+    "Future",
+    "CancelledError",
+    "TimeoutError",
+    "ProcessError",
+    "PoolClosed",
+    "as_completed",
+]
 logger = logging.getLogger(__name__)
 
 
@@ -59,7 +68,7 @@ class Future(concurrent.futures.Future):
         if self.pid:
             try:
                 kill_proc_tree(self.pid, sig=sig)
-            except Exception as e:
+            except Exception as e:  # pragma: no cover
                 logger.warning(f"Got error killing pid {self.pid}: {e}")
 
 
@@ -109,7 +118,7 @@ class Deadpool(Executor):
 
         # THE ONLY ACTIVE, PERSISTENT STATE IN DEADPOOL IS THIS THREAD
         # BELOW. PROTECT IT AT ALL COSTS.
-        self.runner_thread = threading.Thread(target=self.runner, daemon=True)
+        self.runner_thread = threading.Thread(target=self.runner, name="deadpool.runner", daemon=True)
         self.runner_thread.start()
 
     def runner(self):
@@ -177,11 +186,22 @@ class Deadpool(Executor):
                     except ValueError:  # pragma: no cover
                         signame = "Unknown"
 
-                    msg = (
-                        f"Subprocess {p.pid} completed unexpectedly with exitcode {p.exitcode} "
-                        f"({signame})"
-                    )
-                    fut.set_exception(ProcessError(msg))
+                    if not fut.done():
+                        # It is possible that fut has already had a result set on
+                        # it. If that's the case we'll do nothing. Otherwise, put
+                        # an exception reporting the unexpected situation.
+                        msg = (
+                            f"Subprocess {p.pid} completed unexpectedly with exitcode {p.exitcode} "
+                            f"({signame})"
+                        )
+                        try:
+                            fut.set_exception(ProcessError(msg))
+                        except InvalidStateError:  # pragma: no cover
+                            # We still have to catch this even though there is a
+                            # check for `fut.done()`, simply due to an possible
+                            # race between the done check and the set_exception call.
+                            pass
+
                     break
                 else:
                     pass
