@@ -149,7 +149,7 @@ def test_simple_init(raises):
 def test_timeout():
     with elapsed():
         with deadpool.Deadpool() as exe:
-            fut = exe.submit(t, timeout=1.0)
+            fut = exe.submit(t, deadpool_timeout=1.0)
 
             with pytest.raises(deadpool.TimeoutError, match="timed out"):
                 fut.result()
@@ -227,8 +227,8 @@ def test_pid_callback():
     with deadpool.Deadpool(max_workers=5) as exe:
         f1 = exe.submit(k, 1)
 
-        def pid_callback(pid: int):
-            collector.append(pid)
+        def pid_callback(fut: deadpool.Future):
+            collector.append(fut.pid)
 
         f1.add_pid_callback(pid_callback)
 

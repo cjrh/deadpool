@@ -37,23 +37,24 @@ deadpool
 
 ``Deadpool`` is a process pool that is really hard to kill.
 
-+-------------------------------------------------------------------------+
-| The python package name is *deadpool-executor*, so to install           |
-| you must type ``$ pip install deadpool-executor``. The import           |
-| name is *deadpool*, so in your Python code you must type                |
-| ``import deadpool`` to use it.                                          |
-+-------------------------------------------------------------------------+
-
 ``Deadpool`` is an implementation of the ``Executor`` interface
 in the ``concurrent.futures`` standard library. ``Deadpool`` is
 a process pool executor, quite similar to the stdlib's
 `ProcessPoolExecutor`_.
 
-The discussion below assumes that you are familiar with the stdlib
+This document assumes that you are familiar with the stdlib
 `ProcessPoolExecutor`_. If you are not, it is important
 to understand that ``Deadpool`` makes very specific tradeoffs that
 can result in quite different behaviour to the stdlib
 implementation.
+
+Installation
+------------
+
+The python package name is *deadpool-executor*, so to install
+you must type ``$ pip install deadpool-executor``. The import
+name is *deadpool*, so in your Python code you must type
+``import deadpool`` to use it.
 
 Why would I want to use this?
 -----------------------------
@@ -103,6 +104,10 @@ interface. However, it differs in the following ways:
   the pool. This also means that ``Deadpool`` doesn't suffer from
   long-lived subprocesses being affected by memory leaks, usually
   created by native extensions.
+- ``Deadpool`` defaults to the `forkserver <https://docs.python.org/3.11/library/multiprocessing.html#contexts-and-start-methods>`_ multiprocessing
+  context, unlike the stdlib pool which defaults to ``fork`` on
+  Linux. It's just a setting though, you can change it in the same way as
+  with the stdlib pool.
 - ``Deadpool`` does not keep a pool of processes around indefinitely.
   There will only be as many concurrent processes running as there
   is work to be done, up to the limit set by the ``max_workers``
@@ -113,6 +118,12 @@ interface. However, it differs in the following ways:
 - ``Deadpool`` tasks can have timeouts. When a task hits the timeout,
   the underlying subprocess in the pool is killed with ``SIGKILL``.
   The entire process tree of that subprocess is killed.
+- ``Deadpool`` tasks can have priorities. The priority is set in the
+  ``submit()`` call. See the examples later in this document for further
+  discussion on priorities.
+- The shutdown parameters ``wait`` and ``cancel_futures`` can behave 
+  differently to how they work in the _ProcessPoolExecutor. This is 
+  discussed in more detail later in this document.
 - If a ``Deadpool`` subprocess in the pool is killed by some
   external actor, for example, the OS runs out of memory and the
   `OOM killer`_ kills a pool subprocess that is using too much memory,
@@ -125,12 +136,13 @@ interface. However, it differs in the following ways:
   a subprocess, but before the subprocess terminates. It is
   analogous to the ``initializer`` and ``initargs`` parameters.
   Just like the ``initializer`` callable, the ``finalizer``
-  callable is executed inside the subprocess.
-- ``Deadpool`` currently only works on Linux.
-- ``Deadpool`` defaults to the `forkserver <https://docs.python.org/3.11/library/multiprocessing.html#contexts-and-start-methods>`_ multiprocessing
-  context, unlike the stdlib pool which defaults to ``fork`` on
-  Linux. This can however be changed in the same way as with the
-  stdlib pool.
+  callable is executed inside the subprocess. It is not guaranteed that
+  the finalizer will always run. If a process is killed, e.g. due to a
+  timeout or any other reason, the finalizer will not run. The finalizer
+  could be used for things like flushing pending monitoring messages,
+  such as traces and so on.
+- ``Deadpool`` currently only works on Linux. There isn't any specific
+  reason it can't work on other platforms. 
 
 Show me some code
 -----------------
@@ -154,18 +166,18 @@ The simple case works exactly the same as with `ProcessPoolExecutor`_:
     assert result == 123
 
 It is intended that all the basic behaviour should "just work" in the
-same way, and ``Deadpool`` should be a drop-replacement for
-``ProcessPoolExecutor``. For example, there are unit tests with
-the ``Executor.map()`` interface.
+same way, and ``Deadpool`` should be a drop-in replacement for
+``ProcessPoolExecutor``; but there are some subtle differences so you
+should read all of this document to see if any of those will affect you.
 
 Timeouts
 ^^^^^^^^
 
 If a timeout is reached on a task, the subprocess running that task will be
-killed, as in ``SIGKILL``. ``Deadpool`` doesn't care about this, but your own
+killed, as in ``SIGKILL``. ``Deadpool`` doesn't mind, but your own
 application should: if you use timeouts it is likely important that your tasks
 be `idempotent <https://en.wikipedia.org/wiki/Idempotence>`_, especially if
-your system will restart tasks, or restart them after application deployment,
+your application will restart tasks, or restart them after application deployment,
 and other similar scenarios.
 
 .. code-block:: python
@@ -177,7 +189,7 @@ and other similar scenarios.
         time.sleep(10.0)
 
     with deadpool.Deadpool() as exe:
-        fut = exe.submit(f, timeout=1.0)
+        fut = exe.submit(f, deadpool_timeout=1.0)
 
         with pytest.raises(deadpool.TimeoutError)
             fut.result()
@@ -202,9 +214,238 @@ Handling OOM killed situations
             print("Oh no someone killed my task!")
 
 
-As long as the OOM killer removes the subprocess (and not the main process),
-this will not hurt the pool, and it will be able to receive more tasks.
+As long as the OOM killer terminates the subprocess (and not the main process),
+which is likely because it'll be your subprocess that is using too much
+memory, this will not hurt the pool, and it will be able to receive and
+process more tasks.
 
+Design Details
+--------------
+
+Typical Example - with timeouts
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Here's a typical example of how code using Deadpool might look. The
+output of this code should be similar to the following:
+
+.. code-block:: bash
+
+    $ python examples/entrypoint.py
+    ...................xxxxxxxxxxx.xxxxxxx.x.xxxxxxx.x
+    $
+
+Each ``.`` is a successfully completed task, and each ``x`` is a task
+that timed out. Below is the code for this example.
+
+.. code-block:: python
+
+    import random, time
+    import deadpool
+
+
+    def work():
+        time.sleep(random.random() * 4.0)
+        print(".", end="", flush=True)
+        return 1
+
+
+    def main():
+        with deadpool.Deadpool() as exe:
+            futs = (exe.submit(work, timeout=2.0) for _ in range(50))
+            for fut in deadpool.as_completed(futs):
+                try:
+                    assert fut.result() == 1
+                except deadpool.TimeoutError:
+                    print("x", end="", flush=True)
+
+
+    if __name__ == "__main__":
+        main()
+        print()
+
+- The work function will be busy for a random time period between 0 and
+  4 seconds.
+- There is a ``deadpool_timeout`` kwarg given to the ``submit`` method.
+  This kwarg is special and will be consumed by Deadpool. You cannot
+  use this kwarg name for your own task functions.
+- When a task completes, it prints out ``.`` internally. But when a task
+  raises a ``deadpool.TimeoutError``, a ``x`` will be printed out instead.
+- When a task times out, keep in mind that the underlying process that
+  is executing that task is killed, literally with the ``SIGKILL`` signal.
+
+Deadpool tasks have priority
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+The example below is similar to the previous one for timeouts. In fact
+this example retains the timeouts to show how the different features
+compose together. In this example we create tasks with different
+priorities, and we change the printed character of each task to show
+that higher priority items are executed first.
+
+The code example will print something similar to the following:
+
+.. code-block:: bash
+
+    $ python examples/priorities.py
+    !!!!!xxxxxxxxxxx!x..!...x.xxxxxxxx.xxxx.x...xxxxxx
+
+You can see how the ``!`` characters, used for indicating higher priority
+tasks, appear towards the front indicating that they were executed sooner.
+Below is the code.
+
+.. code-block:: python
+
+    import random, time
+    import deadpool
+
+
+    def work(symbol):
+        time.sleep(random.random() * 4.0)
+        print(symbol, end="", flush=True)
+        return 1
+
+
+    def main():
+        with deadpool.Deadpool(max_backlog=100) as exe:
+            futs = []
+            for _ in range(25):
+                fut = exe.submit(work, ".",deadpool_timeout=2.0, deadpool_priority=10)
+                futs.append(fut)
+                fut = exe.submit(work, "!",deadpool_timeout=2.0, deadpool_priority=0)
+                futs.append(fut)
+
+            for fut in deadpool.as_completed(futs):
+                try:
+                    assert fut.result() == 1
+                except deadpool.TimeoutError:
+                    print("x", end="", flush=True)
+
+
+    if __name__ == "__main__":
+        main()
+        print()
+
+- When the tasks are submitted, they are given a priority. The default
+  value for the ``deadpool_priority`` parameter is 0, but here we'll
+  write them out explicity.  Half of the tasks will have priority 10 and
+  half will have priority 0.
+- A lower value for the ``deadpool_priority`` parameters means a **higher**
+  priority. The highest priority allowed is indicated by 0. Negative
+  priority values are not allowed.
+- I also specified the ``max_backlog`` parameter when creating the
+  Deadpool instance. This is discussed in more detail next, but quickly:
+  task priority can only be enforced on what is in the submitted backlog
+  of tasks, and the ``max_backlog`` parameter controls the depth of that
+  queue. If ``max_backlog`` is too low, then the window of prioritization
+  will not include tasks submitted later which might have higher priorities
+  than earlier-submitted tasks. The ``submit`` call will in fact block
+  if the ``max_backlog`` depth has been reached.
+
+Controlling the backlog of submitted tasks
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+By default, the ``max_backlog`` parameter is set to 5. This parameter is
+used to create the "submit queue" size. The submit queue is the place
+where submitted tasks are held before they are executed in background
+processes.
+
+If the submit queue is large (``max_backlog``), it will mean
+that a large number of tasks can be added to the system with the
+``submit`` method, even before any tasks have finished exiting. Conversely,
+a low ``max_backlog`` parameter means that the submit queue will fill up
+faster. If the submit queue is full, it means that the next call to
+``submit`` will block.
+
+This kind of blocking is fine, and typically desired. It means that
+backpressure from blocking is controlling the amount of work in flight.
+By using a smaller ``max_backlog``, it means that you'll also be
+limiting the amount of memory in use during the execution of all the tasks.
+
+However, if you nevertheless still accumulate received futures as my
+example code above is doing, that accumulation, i.e., the list of futures,
+will contribute to memory growth. If you have a large amount of work, it
+will be better to set a *callback* function on each of the futures rather
+than processing them by iterating over ``as_completed``.
+
+The example below illustrates this technique for keeping memory
+consumption down:
+
+.. code-block:: python
+
+    import random, time
+    import deadpool
+
+
+    def work():
+        time.sleep(random.random() * 4.0)
+        print(".", end="", flush=True)
+        return 1
+
+
+    def cb(fut):
+        try:
+            assert fut.result() == 1
+        except deadpool.TimeoutError:
+            print("x", end="", flush=True)
+
+
+    def main():
+        with deadpool.Deadpool() as exe:
+            for _ in range(50):
+                exe.submit(work, deadpool_timeout=2.0).add_done_callback(cb)
+
+
+    if __name__ == "__main__":
+        main()
+        print()
+
+
+With this callback-based design, we no longer have an accumulation of futures
+in a list. We get the same kind of output as in the "typical example" from
+earlier:
+
+.. code-block:: bash
+
+    $ python examples/callbacks.py
+    .....xxx.xxxxxxxxx.........x..xxxxx.x....x.xxxxxxx
+
+
+Speaking of callbacks, the customized ``Future`` class used by Deadpool
+lets you set a callback for when the task begins executing on a real
+system process. That can be configured like so:
+
+.. code-block:: python
+
+    with deadpool.Deadpool() as exe:
+        f = exe.submit(work)
+
+        def cb(fut: deadpool.Future):
+            print(f"My task is running on process {fut.pid}")
+            collector.append(fut.pid)
+
+        f.add_pid_callback(cb)
+
+More about shutdown
+^^^^^^^^^^^^^^^^^^^
+
+In the documentation for _ProcessPoolExecutor, the following function
+signature is given for the _shutdown method of the executor interface:
+
+.. code-block:: python
+
+    shutdown(wait=True, *, cancel_futures=False)
+
+I want to honor this, but it presents some difficulties because the
+semantics of the ``wait`` and ``cancel_futures`` parameters could be
+somewhat different for Deadpool.
+
+In Deadpool, this is what the combinations of those flags mean:
+
+
+
+
+
+.. _shutdown: https://docs.python.org/3/library/concurrent.futures.html?highlight=brokenprocesspool#concurrent.futures.Executor.shutdown
 .. _ProcessPoolExecutor: https://docs.python.org/3/library/concurrent.futures.html?highlight=broken%20process%20pool#processpoolexecutor
 .. _RuntimeError: https://github.com/noxdafox/pebble/issues/42#issuecomment-551245730
 .. _OOM killer: https://en.wikipedia.org/wiki/Out_of_memory#Out_of_memory_management
