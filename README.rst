@@ -425,7 +425,6 @@ system process. That can be configured like so:
 
         def cb(fut: deadpool.Future):
             print(f"My task is running on process {fut.pid}")
-            collector.append(fut.pid)
 
         f.add_pid_callback(cb)
 
