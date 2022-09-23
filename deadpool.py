@@ -5,22 +5,40 @@ Deadpool
 
 """
 import os
-import time
+import sys
 import signal
 import multiprocessing as mp
 from multiprocessing.connection import Connection
 import concurrent.futures
-from concurrent.futures import Executor
+from concurrent.futures import Executor, CancelledError, as_completed, InvalidStateError
 import threading
-from queue import Queue, Empty
+from queue import Queue, Empty, PriorityQueue
 from typing import Callable, Optional
 import logging
+import typing
+import weakref
+from dataclasses import dataclass, field
 
 import psutil
 
 
 __version__ = "2022.9.3"
+__all__ = [
+    "Deadpool",
+    "Future",
+    "CancelledError",
+    "TimeoutError",
+    "ProcessError",
+    "PoolClosed",
+    "as_completed",
+]
 logger = logging.getLogger(__name__)
+
+
+@dataclass(order=True)
+class PrioritizedItem:
+    priority: int
+    item: typing.Any = field(compare=False)
 
 
 class Future(concurrent.futures.Future):
@@ -45,6 +63,14 @@ class Future(concurrent.futures.Future):
     def add_pid_callback(self, fn):
         self.pid_callback = fn
 
+    def cancel_and_kill_if_running(self, sig=signal.SIGKILL):
+        self.cancel()
+        if self.pid:
+            try:
+                kill_proc_tree(self.pid, sig=sig)
+            except Exception as e:  # pragma: no cover
+                logger.warning(f"Got error killing pid {self.pid}: {e}")
+
 
 class TimeoutError(concurrent.futures.TimeoutError):
     ...
@@ -67,6 +93,9 @@ class Deadpool(Executor):
         initargs=(),
         finalizer=None,
         finalargs=(),
+        max_backlog=5,
+        shutdown_wait: Optional[bool] = None,
+        shutdown_cancel_futures: Optional[bool] = None,
     ) -> None:
         super().__init__()
 
@@ -82,24 +111,51 @@ class Deadpool(Executor):
         self.finitializer = finalizer
         self.finitargs = finalargs
         self.pool_size = max_workers or len(os.sched_getaffinity(0))
-        self.submitted_jobs = Queue(maxsize=100)
+        self.submitted_jobs: PriorityQueue[PrioritizedItem] = PriorityQueue(
+            maxsize=max_backlog
+        )
         self.running_jobs = Queue(maxsize=self.pool_size)
+        self.running_futs = weakref.WeakSet()
         self.closed = False
+        self.shutdown_wait = shutdown_wait
+        self.shutdown_cancel_futures = shutdown_cancel_futures
 
         # THE ONLY ACTIVE, PERSISTENT STATE IN DEADPOOL IS THIS THREAD
         # BELOW. PROTECT IT AT ALL COSTS.
-        self.runner_thread = threading.Thread(target=self.runner, daemon=True)
+        self.runner_thread = threading.Thread(
+            target=self.runner, name="deadpool.runner", daemon=True
+        )
         self.runner_thread.start()
 
     def runner(self):
-        while job := self.submitted_jobs.get():
-            # This will block if the queue of running jobs is max size.
+        while True:
+            # This will block if the queue of running jobs is full.
             self.running_jobs.put(None)
+
+            priority_job = self.submitted_jobs.get()
+            job = priority_job.item
+            if job is None:
+                # This is for the `None` that terminates the while loop.
+                self.submitted_jobs.task_done()
+                self.running_jobs.get()
+                # TODO: this probably isn't necessary, since cleanup is happening
+                # in the shutdown method anyway.
+                cancel_all_futures_on_queue(self.submitted_jobs)
+                logger.debug(f"Got shutdown event, leaving runner.")
+                return
+
+            *_, fut = job
+            if fut.done():
+                # This shouldn't really be possible, but if the associated future
+                # for this job has somehow already been marked as done (e.g. if
+                # the caller decided to cancel it themselves) then just skip the
+                # whole job.
+                self.submitted_jobs.task_done()
+                self.running_jobs.get()
+                continue
+
             t = threading.Thread(target=self.run_process, args=job)
             t.start()
-
-        # This is for the `None` that terminates the while loop.
-        self.submitted_jobs.task_done()
 
     def run_process(self, fn, args, kwargs, timeout, fut: Future):
         try:
@@ -121,6 +177,7 @@ class Deadpool(Executor):
             )
             p.start()
             fut.pid = p.pid
+            self.running_futs.add(fut)
 
             while True:
                 if conn_receiver.poll(0.2):
@@ -145,51 +202,132 @@ class Deadpool(Executor):
                     except ValueError:  # pragma: no cover
                         signame = "Unknown"
 
-                    msg = (
-                        f"Subprocess {p.pid} completed unexpectedly with exitcode {p.exitcode} "
-                        f"({signame})"
-                    )
-                    fut.set_exception(ProcessError(msg))
+                    if not fut.done():
+                        # It is possible that fut has already had a result set on
+                        # it. If that's the case we'll do nothing. Otherwise, put
+                        # an exception reporting the unexpected situation.
+                        msg = (
+                            f"Subprocess {p.pid} completed unexpectedly with exitcode {p.exitcode} "
+                            f"({signame})"
+                        )
+                        try:
+                            fut.set_exception(ProcessError(msg))
+                        except InvalidStateError:  # pragma: no cover
+                            # We still have to catch this even though there is a
+                            # check for `fut.done()`, simply due to an possible
+                            # race between the done check and the set_exception call.
+                            pass
+
                     break
                 else:
-                    pass
+                    pass  # pragma: no cover
 
             p.join()
         finally:
+            self.submitted_jobs.task_done()
+
             if not fut.done():  # pragma: no cover
                 fut.set_exception(ProcessError("Somehow no result got set on fut."))
 
-            self.submitted_jobs.task_done()
             try:
                 self.running_jobs.get_nowait()
             except Empty:  # pragma: no cover
                 logger.warning(f"Weird error, did not expect running jobs to be empty")
 
-    def submit(self, __fn: Callable, *args, timeout=None, **kwargs) -> Future:
+    def submit(
+        self, __fn: Callable, *args, timeout=None, priority=0, **kwargs
+    ) -> Future:
         if self.closed:
             raise PoolClosed("The pool is closed. No more tasks can be submitted.")
 
         fut = Future()
-        self.submitted_jobs.put((__fn, args, kwargs, timeout, fut))
+        self.submitted_jobs.put(
+            PrioritizedItem(
+                priority=priority,
+                item=(__fn, args, kwargs, timeout, fut),
+            )
+        )
         return fut
 
-    def shutdown(self, wait: bool = ..., *, cancel_futures: bool = ...) -> None:
-        logger.debug("in shutdown")
+    def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
+        logger.debug(f"shutdown: {wait=} {cancel_futures=}")
+
+        # No more new tasks can be submitted
         self.closed = True
-        self.submitted_jobs.put_nowait(None)
+
+        if cancel_futures:
+            cancel_all_futures_on_queue(self.submitted_jobs)
+
         if wait:
-            logger.debug("waiting for submitted_jobs to join...")
-            self.submitted_jobs.join()
-            logger.debug("submitted_jobs joined.")
+            # The None sentinel will pop last
+            shutdown_priority = sys.maxsize
+        else:
+            # The None sentinel will pop first
+            shutdown_priority = -1
+
+        try:
+            self.submitted_jobs.put(
+                PrioritizedItem(priority=shutdown_priority, item=None),
+                timeout=2.0,
+            )
+        except TimeoutError:  # pragma: no cover
+            logger.warning(
+                "Timed out putting None on the submit queue. This should not be possible "
+                " and might be a bug in deadpool."
+            )
+
+        # Up till this point, all the pending work that has been
+        # submitted, but not yet started, has been cancelled. The
+        # runner loop has also been stopped (with the None sentinel).
+        # The only thing left to do is decide whether or not to
+        # actively kill processes that are still running. We presume
+        # that if the user is asking for cancellation and doesn't
+        # want to wait, that she probably wants us to also stop
+        # running processes.
+        if (not wait) and cancel_futures:
+            running_futs = list(self.running_futs)
+            for fut in running_futs:
+                try:
+                    if fut.pid:
+                        kill_proc_tree(fut.pid)
+                except Exception as e:
+                    logger.warning(f"Got error cancelling {fut.pid=}: {e}")
+                finally:
+                    fut.cancel()
+
+        logger.debug("waiting for submitted_jobs to join...")
+        self.submitted_jobs.join()
+
         return super().shutdown(wait, cancel_futures=cancel_futures)
 
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self.shutdown(wait=True)
+        if not self.closed:
+            kwargs = {}
+            if self.shutdown_wait is not None:
+                kwargs["wait"] = self.shutdown_wait
+
+            if self.shutdown_wait is not None:
+                kwargs["cancel_futures"] = self.shutdown_cancel_futures
+
+            self.shutdown(**kwargs)
+
         self.runner_thread.join()
         return False
+
+
+def cancel_all_futures_on_queue(q: Queue):
+    while True:
+        try:
+            priority_item = q.get_nowait()
+            q.task_done()
+            job = priority_item.item
+            *_, fut = job
+            fut.cancel()
+        except Empty:
+            break
 
 
 def raw_runner(
@@ -212,7 +350,7 @@ def raw_runner(
             with lock:
                 conn.send(obj)
         except BrokenPipeError:  # pragma: no cover
-            logger.error("Pipe not usable")
+            logger.debug("Pipe not usable")
         except:
             logger.exception("Unexpected pipe error")
 
@@ -312,7 +450,6 @@ def kill_proc_tree(
 
     for p in children:
         try:
-            logger.warning("sig: %s %s", p, sig)
             p.send_signal(sig)
         except psutil.NoSuchProcess:
             pass

@@ -1,8 +1,10 @@
 import os
+import queue
 import signal
 from contextlib import contextmanager
 import time
 from concurrent.futures import CancelledError, as_completed
+import logging
 
 import pytest
 
@@ -15,28 +17,93 @@ def f():
 
 def t(duration=10.0):
     time.sleep(duration)
+    return duration
 
 
 def f_err(exception_class, *args, **kwargs):
     raise exception_class(*args, **kwargs)
 
 
-def test_abc():
-    assert 1 == 1
+def test_cancel_all_futures():
+    q = queue.Queue()
+    futs = []
+    for i in range(3):
+        fut = deadpool.Future()
+        futs.append(fut)
+        pi = deadpool.PrioritizedItem(priority=0, item=(None, fut))
+        q.put(pi)
+
+    deadpool.cancel_all_futures_on_queue(q)
+
+    for f in futs:
+        assert f.cancelled()
 
 
 def test_simple():
     with deadpool.Deadpool() as exe:
-        fut = exe.submit(f)
+        fut = exe.submit(t, 0.5)
         result = fut.result()
 
-    print("got result:", result)
-    assert result == 123
+    assert result == 0.5
 
     # Outside the context manager, no new tasks
     # can be submitted.
     with pytest.raises(deadpool.PoolClosed):
         exe.submit(f)
+
+
+@pytest.mark.parametrize("wait", [True, False])
+@pytest.mark.parametrize("cancel_futures", [True, False])
+def test_shutdown(wait, cancel_futures):
+    with deadpool.Deadpool(
+        shutdown_wait=wait,
+        shutdown_cancel_futures=cancel_futures,
+    ) as exe:
+        fut = exe.submit(f)
+        result = fut.result()
+
+    assert result == 123
+
+
+@pytest.mark.parametrize("wait", [True, False])
+@pytest.mark.parametrize("cancel_futures", [True, False])
+def test_shutdown_manual(wait, cancel_futures):
+    logging.info("Test start")
+
+    def callback(*args):
+        logging.info(f"fut callback: {args=}")
+
+    exe = deadpool.Deadpool(max_workers=2)
+    fut1 = exe.submit(t, 2)
+    fut1.add_done_callback(callback)
+    fut2 = exe.submit(t, 2)
+    fut2.add_done_callback(callback)
+    fut3 = exe.submit(t, 2)  # This one will not start executing
+    fut3.add_done_callback(callback)
+
+    # logging.info(f"{exe.submitted_jobs.qsize()=}")
+    # logging.info(f"{exe.running_futs=}")
+    time.sleep(0.5)
+    logging.info(f"{exe.submitted_jobs.qsize()=}")
+    logging.info(f"{exe.running_futs=}")
+    exe.shutdown(wait=wait, cancel_futures=cancel_futures)
+
+    if wait is False:
+        if cancel_futures is True:
+            assert fut1.cancelled()
+            assert fut2.cancelled()
+            assert fut3.cancelled()
+        else:
+            assert fut1.result() == 2
+            assert fut2.result() == 2
+            assert fut3.cancelled()
+    else:
+        assert fut1.result() == 2
+        assert fut2.result() == 2
+        if cancel_futures:
+            assert fut3.cancelled()
+        else:
+            assert fut3.result() == 2
 
 
 def init(x, error=False):
@@ -51,6 +118,17 @@ def finit(x, error=False):
         raise Exception(f"{x}")
     else:
         print(x)
+
+
+def test_user_cancels_future_ahead_of_time():
+    with deadpool.Deadpool(max_workers=1) as exe:
+        fut1 = exe.submit(t, 1)
+        fut2 = exe.submit(t, 2)
+        fut2.cancel()
+        result = fut1.result()
+
+    assert result == 1
+    assert fut2.cancelled()
 
 
 @pytest.mark.parametrize("raises", [False, True])
@@ -238,6 +316,15 @@ def test_bad_exception(raises, exc_type, match):
 
         with pytest.raises(exc_type, match=match):
             result = fut.result()
+
+
+def test_cancel_and_kill():
+    with deadpool.Deadpool() as exe:
+        fut = exe.submit(t, 10)
+        time.sleep(0.5)
+        fut.cancel_and_kill_if_running()
+        with pytest.raises(deadpool.CancelledError):
+            fut.result()
 
 
 @contextmanager
