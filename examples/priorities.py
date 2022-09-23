@@ -12,9 +12,9 @@ def main():
     with deadpool.Deadpool(max_backlog=100) as exe:
         futs = []
         for _ in range(25):
-            fut = exe.submit(work, ".",deadpool_timeout=2.0, deadpool_priority=10)
+            fut = exe.submit(work, ".", deadpool_timeout=2.0, deadpool_priority=10)
             futs.append(fut)
-            fut = exe.submit(work, "!",deadpool_timeout=2.0, deadpool_priority=0)
+            fut = exe.submit(work, "!", deadpool_timeout=2.0, deadpool_priority=0)
             futs.append(fut)
 
         for fut in deadpool.as_completed(futs):

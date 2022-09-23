@@ -235,10 +235,17 @@ class Deadpool(Executor):
                 logger.warning(f"Weird error, did not expect running jobs to be empty")
 
     def submit(
-        self, __fn: Callable, *args, deadpool_timeout=None, deadpool_priority=0, **kwargs
+        self,
+        __fn: Callable,
+        *args,
+        deadpool_timeout=None,
+        deadpool_priority=0,
+        **kwargs,
     ) -> Future:
         if deadpool_priority < 0:  # pragma: no cover
-            raise ValueError(f"Parameter deadpool_priority must be >= 0, but was {deadpool_priority}")
+            raise ValueError(
+                f"Parameter deadpool_priority must be >= 0, but was {deadpool_priority}"
+            )
 
         if self.closed:
             raise PoolClosed("The pool is closed. No more tasks can be submitted.")
