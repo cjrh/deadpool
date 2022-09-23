@@ -56,7 +56,7 @@ class Future(concurrent.futures.Future):
         self._pid = value
         if self.pid_callback:
             try:
-                self.pid_callback(self._pid)
+                self.pid_callback(self)
             except Exception:  # pragma: no cover
                 logger.exception(f"Error calling pid_callback")
 
@@ -235,16 +235,19 @@ class Deadpool(Executor):
                 logger.warning(f"Weird error, did not expect running jobs to be empty")
 
     def submit(
-        self, __fn: Callable, *args, timeout=None, priority=0, **kwargs
+        self, __fn: Callable, *args, deadpool_timeout=None, deadpool_priority=0, **kwargs
     ) -> Future:
+        if deadpool_priority < 0:  # pragma: no cover
+            raise ValueError(f"Parameter deadpool_priority must be >= 0, but was {deadpool_priority}")
+
         if self.closed:
             raise PoolClosed("The pool is closed. No more tasks can be submitted.")
 
         fut = Future()
         self.submitted_jobs.put(
             PrioritizedItem(
-                priority=priority,
-                item=(__fn, args, kwargs, timeout, fut),
+                priority=deadpool_priority,
+                item=(__fn, args, kwargs, deadpool_timeout, fut),
             )
         )
         return fut
