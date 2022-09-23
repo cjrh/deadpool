@@ -440,7 +440,7 @@ signature is given for the _shutdown method of the executor interface:
     shutdown(wait=True, *, cancel_futures=False)
 
 I want to honor this, but it presents some difficulties because the
-semantics of the ``wait`` and ``cancel_futures`` parameters could be
+semantics of the ``wait`` and ``cancel_futures`` parameters need to be
 somewhat different for Deadpool.
 
 In Deadpool, this is what the combinations of those flags mean:
@@ -472,6 +472,24 @@ In Deadpool, this is what the combinations of those flags mean:
    might have been to allow all tasks, both running and pending, to just
    keep going in the background even after the ``shutdown()`` call
    returns. Does anyone have a use-case for this?"
+
+If you're using ``Deadpool`` as a context manager, you might be wondering
+how exactly to set these parameters in the ``shutdown`` call, since that
+call is made for you automatically when the context manager exits.
+
+For this, Deadpool provides additional parameters that can be provided
+when creating the instance:
+
+.. code-block:: python
+
+   # This is pseudocode
+   import deadpool
+
+   with deadpool.DeadPool(
+           shutdown_wait=True,
+           shutdown_cancel_futures=True
+   ):
+       fut = exe.submit(...)
 
 
 .. _shutdown: https://docs.python.org/3/library/concurrent.futures.html?highlight=brokenprocesspool#concurrent.futures.Executor.shutdown

@@ -319,7 +319,7 @@ class Deadpool(Executor):
             if self.shutdown_wait is not None:
                 kwargs["wait"] = self.shutdown_wait
 
-            if self.shutdown_wait is not None:
+            if self.shutdown_cancel_futures is not None:
                 kwargs["cancel_futures"] = self.shutdown_cancel_futures
 
             self.shutdown(**kwargs)
