@@ -142,9 +142,7 @@ interface. However, it differs in the following ways:
   could be used for things like flushing pending monitoring messages,
   such as traces and so on.
 - ``Deadpool`` currently only works on Linux. There isn't any specific
-  reason it can't work on other platforms but I just haven't had time
-  to do it. I use Linux personally so testing other platforms is more work
-  for me.
+  reason it can't work on other platforms. 
 
 Show me some code
 -----------------
