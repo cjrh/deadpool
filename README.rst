@@ -167,7 +167,7 @@ The simple case works exactly the same as with `ProcessPoolExecutor`_:
 
 It is intended that all the basic behaviour should "just work" in the
 same way, and ``Deadpool`` should be a drop-in replacement for
-``ProcessPoolExecutor``; but there are some subtle differences so you
+`ProcessPoolExecutor`_; but there are some subtle differences so you
 should read all of this document to see if any of those will affect you.
 
 Timeouts
