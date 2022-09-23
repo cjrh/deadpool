@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 import psutil
 
 
-__version__ = "2022.9.3"
+__version__ = "2022.9.4"
 __all__ = [
     "Deadpool",
     "Future",
