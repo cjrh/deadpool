@@ -445,8 +445,18 @@ somewhat different for Deadpool.
 
 In Deadpool, this is what the combinations of those flags mean:
 
+.. csv-table:: Shutdown flags
+   :header: ``wait``, ``cancel_futures``, ``effect``
+   :widths: 10, 10, 80
+   :align: left
 
-
+   ``True``, ``True``, Wait for already-running tasks to complete. Cancel
+   all pending tasks that are in the submit queue, but have not yet started
+   running. The ``fut.cancelled()`` method will return ``True`` for such
+   cancelled tasks.
+   ``True``, ``False``, blah
+   ``False``, ``True``, blah
+   ``False``, ``False``, blah
 
 
 .. _shutdown: https://docs.python.org/3/library/concurrent.futures.html?highlight=brokenprocesspool#concurrent.futures.Executor.shutdown
