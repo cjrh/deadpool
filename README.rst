@@ -432,8 +432,8 @@ system process. That can be configured like so:
 More about shutdown
 ^^^^^^^^^^^^^^^^^^^
 
-In the documentation for _ProcessPoolExecutor, the following function
-signature is given for the _shutdown method of the executor interface:
+In the documentation for ProcessPoolExecutor_, the following function
+signature is given for the shutdown_ method of the executor interface:
 
 .. code-block:: python
 
