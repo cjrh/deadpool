@@ -94,6 +94,8 @@ class Deadpool(Executor):
         finalizer=None,
         finalargs=(),
         max_backlog=5,
+        shutdown_wait: Optional[bool] = None,
+        shutdown_cancel_futures: Optional[bool] = None,
     ) -> None:
         super().__init__()
 
@@ -115,18 +117,27 @@ class Deadpool(Executor):
         self.running_jobs = Queue(maxsize=self.pool_size)
         self.running_futs = weakref.WeakSet()
         self.closed = False
+        self.shutdown_wait = shutdown_wait
+        self.shutdown_cancel_futures = shutdown_cancel_futures
 
         # THE ONLY ACTIVE, PERSISTENT STATE IN DEADPOOL IS THIS THREAD
         # BELOW. PROTECT IT AT ALL COSTS.
-        self.runner_thread = threading.Thread(target=self.runner, name="deadpool.runner", daemon=True)
+        self.runner_thread = threading.Thread(
+            target=self.runner, name="deadpool.runner", daemon=True
+        )
         self.runner_thread.start()
 
     def runner(self):
-        while priority_job := self.submitted_jobs.get():
+        while True:
+            # This will block if the queue of running jobs is full.
+            self.running_jobs.put(None)
+
+            priority_job = self.submitted_jobs.get()
             job = priority_job.item
             if job is None:
                 # This is for the `None` that terminates the while loop.
                 self.submitted_jobs.task_done()
+                self.running_jobs.get()
                 # TODO: this probably isn't necessary, since cleanup is happening
                 # in the shutdown method anyway.
                 cancel_all_futures_on_queue(self.submitted_jobs)
@@ -134,10 +145,15 @@ class Deadpool(Executor):
                 return
 
             *_, fut = job
-            if fut.cancelled():
+            if fut.done():
+                # This shouldn't really be possible, but if the associated future
+                # for this job has somehow already been marked as done (e.g. if
+                # the caller decided to cancel it themselves) then just skip the
+                # whole job.
+                self.submitted_jobs.task_done()
+                self.running_jobs.get()
                 continue
-            # This will block if the queue of running jobs is max size.
-            self.running_jobs.put(None)
+
             t = threading.Thread(target=self.run_process, args=job)
             t.start()
 
@@ -204,7 +220,7 @@ class Deadpool(Executor):
 
                     break
                 else:
-                    pass
+                    pass  # pragma: no cover
 
             p.join()
         finally:
@@ -254,11 +270,11 @@ class Deadpool(Executor):
                 PrioritizedItem(priority=shutdown_priority, item=None),
                 timeout=2.0,
             )
-        except TimeoutError:
-            logger.warning("Timed out putting None on the submit queue.")
-
-        logger.debug("waiting for submitted_jobs to join...")
-        self.submitted_jobs.join()
+        except TimeoutError:  # pragma: no cover
+            logger.warning(
+                "Timed out putting None on the submit queue. This should not be possible "
+                " and might be a bug in deadpool."
+            )
 
         # Up till this point, all the pending work that has been
         # submitted, but not yet started, has been cancelled. The
@@ -279,13 +295,25 @@ class Deadpool(Executor):
                 finally:
                     fut.cancel()
 
+        logger.debug("waiting for submitted_jobs to join...")
+        self.submitted_jobs.join()
+
         return super().shutdown(wait, cancel_futures=cancel_futures)
 
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        self.shutdown(wait=True)
+        if not self.closed:
+            kwargs = {}
+            if self.shutdown_wait is not None:
+                kwargs["wait"] = self.shutdown_wait
+
+            if self.shutdown_wait is not None:
+                kwargs["cancel_futures"] = self.shutdown_cancel_futures
+
+            self.shutdown(**kwargs)
+
         self.runner_thread.join()
         return False
 
