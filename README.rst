@@ -48,6 +48,10 @@ to understand that ``Deadpool`` makes very specific tradeoffs that
 can result in quite different behaviour to the stdlib
 implementation.
 
+.. contents::
+   :local:
+   :backlinks: entry
+
 Installation
 ------------
 
