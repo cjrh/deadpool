@@ -44,3 +44,11 @@ test = [
     "flake8",
     "coverage[toml]"
 ]
+
+[tool.black]
+include = '\.pyi?$'
+extend-exclude = '''
+(
+    ^/venv.*
+)
+'''
