@@ -125,8 +125,8 @@ interface. However, it differs in the following ways:
 - ``Deadpool`` tasks can have priorities. The priority is set in the
   ``submit()`` call. See the examples later in this document for further
   discussion on priorities.
-- The shutdown parameters ``wait`` and ``cancel_futures`` can behave 
-  differently to how they work in the _ProcessPoolExecutor. This is 
+- The shutdown parameters ``wait`` and ``cancel_futures`` can behave
+  differently to how they work in the _ProcessPoolExecutor. This is
   discussed in more detail later in this document.
 - If a ``Deadpool`` subprocess in the pool is killed by some
   external actor, for example, the OS runs out of memory and the
@@ -146,7 +146,7 @@ interface. However, it differs in the following ways:
   could be used for things like flushing pending monitoring messages,
   such as traces and so on.
 - ``Deadpool`` currently only works on Linux. There isn't any specific
-  reason it can't work on other platforms. 
+  reason it can't work on other platforms.
 
 Show me some code
 -----------------
@@ -450,13 +450,28 @@ In Deadpool, this is what the combinations of those flags mean:
    :widths: 10, 10, 80
    :align: left
 
-   ``True``, ``True``, Wait for already-running tasks to complete. Cancel
+   ``True``, ``True``, "Wait for already-running tasks to complete; the
+   ``shutdown()`` call will unblock (return) when they're done. Cancel
    all pending tasks that are in the submit queue, but have not yet started
    running. The ``fut.cancelled()`` method will return ``True`` for such
-   cancelled tasks.
-   ``True``, ``False``, blah
-   ``False``, ``True``, blah
-   ``False``, ``False``, blah
+   cancelled tasks."
+   ``True``, ``False``, "Wait for already-running tasks to complete.
+   Pending tasks in the
+   submit queue that have not yet started running will *not* be cancelled, and
+   will all continue to execute. The ``shutdown()`` call will return only
+   after all submitted tasks have completed. "
+   ``False``, ``True``, "Already-running tasks **will be cancelled** and this
+   means the underlying subprocesses executing these tasks will receive
+   SIGKILL. Pending tasks on the submit queue that have not yet started
+   running will also be cancelled."
+   ``False``, ``False``, "This is a strange one. What to do if the caller
+   doesn't want to wait, but also doesn't want to cancel things? In this
+   case, already-running tasks will be allowed to complete, but pending
+   tasks on the submit queue will be cancelled. This is the same outcome as
+   as ``wait==True`` and ``cancel_futures==True``. An alternative design
+   might have been to allow all tasks, both running and pending, to just
+   keep going in the background even after the ``shutdown()`` call
+   returns. Does anyone have a use-case for this?"
 
 
 .. _shutdown: https://docs.python.org/3/library/concurrent.futures.html?highlight=brokenprocesspool#concurrent.futures.Executor.shutdown

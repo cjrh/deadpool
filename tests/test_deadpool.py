@@ -87,6 +87,7 @@ def test_shutdown_manual(wait, cancel_futures):
     logging.info(f"{exe.submitted_jobs.qsize()=}")
     logging.info(f"{exe.running_futs=}")
     exe.shutdown(wait=wait, cancel_futures=cancel_futures)
+    logging.info(f"shutdown has unblocked")
 
     if wait is False:
         if cancel_futures is True:
