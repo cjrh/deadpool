@@ -18,6 +18,7 @@ import logging
 import typing
 import weakref
 from dataclasses import dataclass, field
+import asyncio
 
 import psutil
 
@@ -258,6 +259,9 @@ class Deadpool(Executor):
             )
         )
         return fut
+
+    async def asubmit(self, *args, **kwargs) -> asyncio.Future:
+        return asyncio.wrap_future(self.submit(*args, **kwargs))
 
     def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
         logger.debug(f"shutdown: {wait=} {cancel_futures=}")
