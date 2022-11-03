@@ -72,6 +72,9 @@ class Future(concurrent.futures.Future):
             except Exception as e:  # pragma: no cover
                 logger.warning(f"Got error killing pid {self.pid}: {e}")
 
+    def __await__(self):
+        return asyncio.wrap_future(self).__await__()
+
 
 class TimeoutError(concurrent.futures.TimeoutError):
     ...
