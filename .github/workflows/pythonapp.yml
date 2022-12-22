@@ -35,7 +35,7 @@ jobs:
       uses: actions/checkout@755da8c3cf115ac066823e79a1e1788f8940201b # tag=v3.0.0
 
     - name: Set up Python
-      uses: actions/setup-python@13ae5bb136fac2878aff31522b9efb785519f984
+      uses: actions/setup-python@5ccb29d8773c3f3f653e1705f474dfaa8a06a912
       with:
         python-version: ${{ matrix.python-version }}
         architecture: x64
