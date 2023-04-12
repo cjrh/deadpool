@@ -43,7 +43,7 @@ jobs:
           storage.googleapis.com:443
           y2oiacprodeus2file6.blob.core.windows.net:443  # cache builds
 
-    - uses: actions/checkout@8f4b7f84864484a7bf31766abe9204da3cbe65b3
+    - uses: actions/checkout@83b7061638ee4956cf7545a6f7efe594e5ad0247
       with:
         fetch-depth: 0
 
@@ -68,7 +68,7 @@ jobs:
           pkg-containers.githubusercontent.com:443
 
     - name: Checkout the code
-      uses: actions/checkout@8f4b7f84864484a7bf31766abe9204da3cbe65b3 # v2
+      uses: actions/checkout@83b7061638ee4956cf7545a6f7efe594e5ad0247 # v2
       with:
         fetch-depth: 0
         persist-credentials: false
@@ -120,7 +120,7 @@ jobs:
         egress-policy: audit # TODO: change to 'egress-policy: block' after couple of runs
 
     - name: Checkout the code
-      uses: actions/checkout@8f4b7f84864484a7bf31766abe9204da3cbe65b3 # v3.0.2
+      uses: actions/checkout@83b7061638ee4956cf7545a6f7efe594e5ad0247 # v3.0.2
       with:
         fetch-depth: 0
 
@@ -144,7 +144,7 @@ jobs:
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@8f4b7f84864484a7bf31766abe9204da3cbe65b3
+      uses: actions/checkout@83b7061638ee4956cf7545a6f7efe594e5ad0247
 
     # Initializes the CodeQL tools for scanning.
     - name: Initialize CodeQL
