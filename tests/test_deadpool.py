@@ -19,7 +19,7 @@ class TestThreadPool(unittest.TestCase):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
-        with ThreadPool() as pool:
+        with deadpool.Deadpool() as pool:
             mock_callback = Mock()
             loop.run_in_executor(pool, mock_callback)
             mock_callback.assert_called_once()
