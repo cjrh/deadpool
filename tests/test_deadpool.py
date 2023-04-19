@@ -1,14 +1,28 @@
-import os
-import queue
-import signal
-from contextlib import contextmanager
-import time
-from concurrent.futures import CancelledError, as_completed
+import asyncio
 import logging
-
+import os
 import pytest
+import queue
+import unittest
+import signal
+import time
+
+from concurrent.futures import CancelledError, as_completed
+from contextlib import contextmanager
+from unittest.mock import Mock
 
 import deadpool
+
+
+class TestThreadPool(unittest.TestCase):
+    def test_run_in_executor(self):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        with ThreadPool() as pool:
+            mock_callback = Mock()
+            loop.run_in_executor(pool, mock_callback)
+            mock_callback.assert_called_once()
 
 
 def f():
