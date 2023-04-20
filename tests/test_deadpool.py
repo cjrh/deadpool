@@ -32,8 +32,10 @@ class TestDeadPool(unittest.TestCase):
 
     async def test_concurrent_tasks(self):
         async with deadpool.DeadPool(size=2) as pool:
-            results = await asyncio.gather(pool.run_in_executor(test_func),
-                                           pool.run_in_executor(test_func))
+            results = await asyncio.gather(
+                pool.run_in_executor(test_func),
+                pool.run_in_executor(test_func)
+            )
             self.assertEqual(len(results), 2)
             self.assertIn(42, results)
 
