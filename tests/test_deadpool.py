@@ -61,12 +61,15 @@ class TestDeadPool(unittest.TestCase):
         async def failing_func():
             await asyncio.sleep(0.1)
             raise ValueError("failed")
+
         async with deadpool.DeadPool(size=2) as pool:
-            results = await asyncio.gather(pool.run_in_executor(failing_func),
-                                           pool.run_in_executor(test_func))
-            self.assertEqual(len(results), 2)
-            self.assertIn(42, results)
-            self.assertIsInstance(results[0], ValueError)
+            results = await asyncio.gather(
+                 pool.run_in_executor(failing_func),
+                 pool.run_in_executor(test_func)
+             )
+             self.assertEqual(len(results), 2)
+             self.assertIn(42, results)
+             self.assertIsInstance(results[0], ValueError)                                           
 
 
 def f():
