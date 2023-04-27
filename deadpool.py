@@ -128,7 +128,7 @@ class Deadpool(Executor):
             target=self.runner,
             name="deadpool.runner",
             daemon=True,
-            trace_context=self.trace_context
+            _trace_context=self.trace_context
         )
         self.runner_thread.start()
 
