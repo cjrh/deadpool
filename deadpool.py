@@ -96,6 +96,7 @@ class Deadpool(Executor):
         max_backlog=5,
         shutdown_wait: Optional[bool] = None,
         shutdown_cancel_futures: Optional[bool] = None,
+        trace_context: Optional[dict] = None,
     ) -> None:
         super().__init__()
 
@@ -119,11 +120,15 @@ class Deadpool(Executor):
         self.closed = False
         self.shutdown_wait = shutdown_wait
         self.shutdown_cancel_futures = shutdown_cancel_futures
+        self.trace_context = trace_context
 
         # THE ONLY ACTIVE, PERSISTENT STATE IN DEADPOOL IS THIS THREAD
         # BELOW. PROTECT IT AT ALL COSTS.
         self.runner_thread = threading.Thread(
-            target=self.runner, name="deadpool.runner", daemon=True
+            target=self.runner,
+            name="deadpool.runner",
+            daemon=True,
+            trace_context=self.trace_context
         )
         self.runner_thread.start()
 
