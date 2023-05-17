@@ -137,7 +137,7 @@ class Deadpool(Executor):
             if job is None:
                 # This is for the `None` that terminates the while loop.
                 self.submitted_jobs.task_done()
-                self.running_jobs.get()
+                self.running_jobs.get_nowait()
                 # TODO: this probably isn't necessary, since cleanup is happening
                 # in the shutdown method anyway.
                 cancel_all_futures_on_queue(self.submitted_jobs)
@@ -151,7 +151,7 @@ class Deadpool(Executor):
                 # the caller decided to cancel it themselves) then just skip the
                 # whole job.
                 self.submitted_jobs.task_done()
-                self.running_jobs.get()
+                self.running_jobs.get_nowait()
                 continue
 
             t = threading.Thread(target=self.run_process, args=job)
