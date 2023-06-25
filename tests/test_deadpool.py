@@ -6,12 +6,20 @@ import queue
 import unittest
 import signal
 import time
+from concurrent.futures import CancelledError, as_completed
+import logging
+from functools import partial
 
 from concurrent.futures import CancelledError, as_completed, ThreadPoolExecutor
 from contextlib import contextmanager
 from unittest.mock import Mock
 
 import deadpool
+
+
+@pytest.fixture()
+def logging_initializer():
+    return partial(logging.basicConfig, level=logging.DEBUG)
 
 
 async def test_func():
@@ -113,12 +121,22 @@ def test_simple():
         exe.submit(f)
 
 
+def test_simple_batch(logging_initializer):
+    with deadpool.Deadpool(max_workers=1, initializer=logging_initializer) as exe:
+        futs = [exe.submit(t, 0.1) for _ in range(2)]
+        results = [fut.result() for fut in futs]
+
+    assert results == [0.1] * 2
+
+
 @pytest.mark.parametrize("wait", [True, False])
 @pytest.mark.parametrize("cancel_futures", [True, False])
-def test_shutdown(wait, cancel_futures):
+def test_shutdown(logging_initializer, wait, cancel_futures):
     with deadpool.Deadpool(
+        max_workers=1,
         shutdown_wait=wait,
         shutdown_cancel_futures=cancel_futures,
+        initializer=logging_initializer
     ) as exe:
         fut = exe.submit(f)
         result = fut.result()
@@ -128,13 +146,13 @@ def test_shutdown(wait, cancel_futures):
 
 @pytest.mark.parametrize("wait", [True, False])
 @pytest.mark.parametrize("cancel_futures", [True, False])
-def test_shutdown_manual(wait, cancel_futures):
+def test_shutdown_manual(logging_initializer, wait, cancel_futures):
     logging.info("Test start")
 
     def callback(*args):
         logging.info(f"fut callback: {args=}")
 
-    exe = deadpool.Deadpool(max_workers=2)
+    exe = deadpool.Deadpool(max_workers=2, initializer=logging_initializer)
     fut1 = exe.submit(t, 2)
     fut1.add_done_callback(callback)
     fut2 = exe.submit(t, 2)
@@ -149,6 +167,10 @@ def test_shutdown_manual(wait, cancel_futures):
     logging.info(f"{exe.running_futs=}")
     exe.shutdown(wait=wait, cancel_futures=cancel_futures)
     logging.info(f"shutdown has unblocked")
+
+    logging.debug(f"{fut1.pid=}")
+    logging.debug(f"{fut2.pid=}")
+    logging.debug(f"{fut3.pid=}")
 
     if wait is False:
         if cancel_futures is True:
@@ -298,7 +320,7 @@ def test_pid_callback():
 
 
 def f_sub():
-    with deadpool.Deadpool() as exe:
+    with deadpool.Deadpool(daemon=False) as exe:
         fut = exe.submit(g_sub)
         return fut.result()
 
@@ -311,7 +333,7 @@ def g_sub():
 
 
 def test_sub_sub_process():
-    with deadpool.Deadpool(max_workers=5) as exe:
+    with deadpool.Deadpool(max_workers=5, daemon=False, mp_context="spawn") as exe:
         f1 = exe.submit(f_sub)
         time.sleep(0.5)
         assert f1.pid
@@ -368,12 +390,12 @@ def raise_custom_exception(exc_class):
     [
         (MyBadException, MyBadException, "(1, 2, 3)"),
         (MyBadExceptionSetState, ValueError, "failed to unpickle"),
-        (MyBadExceptionReduce, deadpool.ProcessError, "completed unexpectedly"),
-        (MyBadExceptionReduceRaise, deadpool.ProcessError, "completed unexpectedly"),
+        (MyBadExceptionReduce, deadpool.ProcessError, "pickling it failed"),
+        (MyBadExceptionReduceRaise, deadpool.ProcessError, "pickling it failed"),
     ],
 )
-def test_bad_exception(raises, exc_type, match):
-    with deadpool.Deadpool() as exe:
+def test_bad_exception(logging_initializer, raises, exc_type, match):
+    with deadpool.Deadpool(max_workers=1, initializer=logging_initializer) as exe:
         fut = exe.submit(raise_custom_exception, raises)
 
         with pytest.raises(exc_type, match=match):
