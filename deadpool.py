@@ -94,6 +94,9 @@ class WorkerProcess:
     def pid(self):
         return self.process.pid
 
+    def get_rss_bytes(self) -> int:
+        return psutil.Process(pid=self.pid).memory_info().rss
+
     def submit_job(self, job):
         self.tasks_ran_counter += 1
         self.connection_send_msgs_to_process.send(job)
@@ -170,6 +173,7 @@ class Deadpool(Executor):
         max_workers: Optional[int] = None,
         min_workers: Optional[int] = None,
         max_tasks_per_child: Optional[int] = None,
+        max_worker_memory_bytes: Optional[int] = None,
         mp_context=None,
         initializer=None,
         initargs=(),
@@ -196,6 +200,7 @@ class Deadpool(Executor):
         self.pool_size = max_workers or len(os.sched_getaffinity(0))
         self.min_workers = min_workers or self.pool_size
         self.max_tasks_per_child = max_tasks_per_child
+        self.max_worker_memory_bytes = max_worker_memory_bytes
         self.submitted_jobs: PriorityQueue[PrioritizedItem] = PriorityQueue(
             maxsize=max_backlog
         )
@@ -296,6 +301,12 @@ class Deadpool(Executor):
 
         if self.max_tasks_per_child is not None:
             if wp.tasks_ran_counter >= self.max_tasks_per_child:
+                wp.shutdown(wait=False)
+                self.add_worker_to_pool()
+                return
+
+        if self.max_worker_memory_bytes is not None:
+            if wp.get_rss_bytes() >= self.max_worker_memory_bytes:
                 wp.shutdown(wait=False)
                 self.add_worker_to_pool()
                 return
