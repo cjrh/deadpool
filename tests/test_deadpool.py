@@ -392,13 +392,17 @@ def raise_custom_exception(exc_class):
             MyBadExceptionReduce,
             deadpool.ProcessError,
             "pickling it failed",
-            marks=pytest.mark.skipif(sys.version_info < (3, 10), reason="different message"),
+            marks=pytest.mark.skipif(
+                sys.version_info < (3, 10), reason="different message"
+            ),
         ),
         pytest.param(
             MyBadExceptionReduceRaise,
             deadpool.ProcessError,
             "pickling it failed",
-            marks=pytest.mark.skipif(sys.version_info < (3, 10), reason="different message"),
+            marks=pytest.mark.skipif(
+                sys.version_info < (3, 10), reason="different message"
+            ),
         ),
     ],
 )
