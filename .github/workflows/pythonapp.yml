@@ -60,9 +60,11 @@ jobs:
         GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
         COVERALLS_REPO_TOKEN: "${{ secrets.COVERALLS_REPO_TOKEN }}"
         COVERALLS_PARALLEL: "true"
+        # https://github.com/TheKevJames/coveralls-python/issues/252#issuecomment-1529081732:
+        COVERALLS_SERVICE_JOB_ID: ${{ github.run_id }}
       run: |
         pip install coveralls
-        coveralls
+        coveralls --service=github
 
     - name: Finish parallel coverage
       if: matrix.os == 'ubuntu-latest'
@@ -71,4 +73,4 @@ jobs:
         COVERALLS_REPO_TOKEN: "${{ secrets.COVERALLS_REPO_TOKEN }}"
         COVERALLS_PARALLEL: "true"
       run: |
-        coveralls --finish
+        coveralls --service=github --finish
