@@ -1,18 +1,15 @@
 import asyncio
-import logging
 import os
-import pytest
 import queue
 import unittest
 import signal
 import time
-from concurrent.futures import CancelledError, as_completed
 import logging
 from functools import partial
-
-from concurrent.futures import CancelledError, as_completed, ThreadPoolExecutor
+from concurrent.futures import CancelledError, as_completed
 from contextlib import contextmanager
-from unittest.mock import Mock
+
+import pytest
 
 import deadpool
 
