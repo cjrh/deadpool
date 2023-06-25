@@ -141,7 +141,7 @@ class Future(concurrent.futures.Future):
             try:
                 self.pid_callback(self)
             except Exception:  # pragma: no cover
-                logger.exception(f"Error calling pid_callback")
+                logger.exception("Error calling pid_callback")
 
     def add_pid_callback(self, fn):
         self.pid_callback = fn
