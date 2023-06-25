@@ -1,6 +1,7 @@
 import asyncio
 import os
 import queue
+import sys
 import unittest
 import signal
 import time
@@ -387,8 +388,18 @@ def raise_custom_exception(exc_class):
     [
         (MyBadException, MyBadException, "(1, 2, 3)"),
         (MyBadExceptionSetState, ValueError, "failed to unpickle"),
-        (MyBadExceptionReduce, deadpool.ProcessError, "pickling it failed"),
-        (MyBadExceptionReduceRaise, deadpool.ProcessError, "pickling it failed"),
+        pytest.param(
+            MyBadExceptionReduce,
+            deadpool.ProcessError,
+            "pickling it failed",
+            marks=pytest.mark.skipif(sys.version_info <= (3, 9), reason="py39+"),
+        ),
+        pytest.param(
+            MyBadExceptionReduceRaise,
+            deadpool.ProcessError,
+            "pickling it failed",
+            marks=pytest.mark.skipif(sys.version_info <= (3, 9), reason="py39+"),
+        ),
     ],
 )
 def test_bad_exception(logging_initializer, raises, exc_type, match):
