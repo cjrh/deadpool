@@ -314,7 +314,9 @@ class Deadpool(Executor):
                     try:
                         results = worker.get_results()
                     except EOFError:
-                        fut.set_exception(ProcessError("Worker process died unexpectedly"))
+                        fut.set_exception(
+                            ProcessError("Worker process died unexpectedly")
+                        )
                     except BaseException as e:
                         logger.debug(f"Unexpected exception from worker: {e}")
                         fut.set_exception(e)
@@ -449,7 +451,6 @@ class Deadpool(Executor):
             worker = self.busy_workers.pop()
             worker.shutdown()
 
-
     def __enter__(self):
         return self
 
@@ -569,7 +570,7 @@ def raw_runner2(
             # to wrap it. Why do this? It turns out that mp.Connection.send
             # will try to pickle the exception, and if it can't, it will
             # lose its mind. I've gotten segfaults in Python with this.
-            try: # pragma: no cover
+            try:  # pragma: no cover
                 pickle.dumps(e)
             except Exception as pickle_error:
                 msg = (

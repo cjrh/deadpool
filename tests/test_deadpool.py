@@ -133,7 +133,7 @@ def test_shutdown(logging_initializer, wait, cancel_futures):
         max_workers=1,
         shutdown_wait=wait,
         shutdown_cancel_futures=cancel_futures,
-        initializer=logging_initializer
+        initializer=logging_initializer,
     ) as exe:
         fut = exe.submit(f)
         result = fut.result()
