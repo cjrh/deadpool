@@ -1,14 +1,14 @@
 import asyncio
+import logging
 import os
 import queue
-import sys
-import unittest
 import signal
+import sys
 import time
-import logging
-from functools import partial
+import unittest
 from concurrent.futures import CancelledError, as_completed
 from contextlib import contextmanager
+from functools import partial
 
 import pytest
 
@@ -164,7 +164,7 @@ def test_shutdown_manual(logging_initializer, wait, cancel_futures):
     logging.info(f"{exe.submitted_jobs.qsize()=}")
     logging.info(f"{exe.running_futs=}")
     exe.shutdown(wait=wait, cancel_futures=cancel_futures)
-    logging.info(f"shutdown has unblocked")
+    logging.info("shutdown has unblocked")
 
     logging.debug(f"{fut1.pid=}")
     logging.debug(f"{fut2.pid=}")
@@ -325,7 +325,7 @@ def f_sub():
 
 def g_sub():
     with deadpool.Deadpool() as exe:
-        futs = exe.map(time.sleep, [55.0] * 10)
+        _futs = exe.map(time.sleep, [55.0] * 10)
 
     return 123
 
@@ -411,7 +411,7 @@ def test_bad_exception(logging_initializer, raises, exc_type, match):
         fut = exe.submit(raise_custom_exception, raises)
 
         with pytest.raises(exc_type, match=match):
-            result = fut.result()
+            _result = fut.result()
 
 
 def test_cancel_and_kill():

@@ -4,25 +4,24 @@ Deadpool
 
 
 """
-import os
-import sys
-import signal
-import multiprocessing as mp
-from multiprocessing.connection import Connection
 import concurrent.futures
-from concurrent.futures import Executor, CancelledError, as_completed, InvalidStateError
-import threading
-from queue import Queue, Empty, PriorityQueue, SimpleQueue
-from typing import Callable, Optional, Tuple
 import logging
+import multiprocessing as mp
+import os
+import pickle
+import signal
+import sys
+import threading
+import traceback
 import typing
 import weakref
+from concurrent.futures import CancelledError, Executor, InvalidStateError, as_completed
 from dataclasses import dataclass, field
-import pickle
-import traceback
+from multiprocessing.connection import Connection
+from queue import Empty, PriorityQueue, Queue, SimpleQueue
+from typing import Callable, Optional, Tuple
 
 import psutil
-
 
 __version__ = "2022.9.6"
 __all__ = [
@@ -254,7 +253,7 @@ class Deadpool(Executor):
                 # TODO: this probably isn't necessary, since cleanup is happening
                 # in the shutdown method anyway.
                 cancel_all_futures_on_queue(self.submitted_jobs)
-                logger.debug(f"Got shutdown event, leaving runner.")
+                logger.debug("Got shutdown event, leaving runner.")
                 return
 
             *_, fut = job
@@ -375,7 +374,7 @@ class Deadpool(Executor):
             try:
                 self.running_jobs.get_nowait()
             except Empty:  # pragma: no cover
-                logger.warning(f"Weird error, did not expect running jobs to be empty")
+                logger.warning("Weird error, did not expect running jobs to be empty")
 
     def submit(
         self,
@@ -425,8 +424,9 @@ class Deadpool(Executor):
             )
         except TimeoutError:  # pragma: no cover
             logger.warning(
-                "Timed out putting None on the submit queue. This should not be possible "
-                " and might be a bug in deadpool."
+                "Timed out putting None on the submit queue. This "
+                "should not be possible "
+                "and might be a bug in deadpool."
             )
 
         # Up till this point, all the pending work that has been
@@ -511,7 +511,7 @@ def raw_runner2(
                 conn.send(obj)
         except BrokenPipeError:  # pragma: no cover
             logger.debug("Pipe not usable")
-        except:
+        except BaseException:
             logger.exception("Unexpected pipe error")
 
     def timed_out():
@@ -522,6 +522,7 @@ def raw_runner2(
         kill_proc_tree(pid, sig=signal.SIGKILL, allow_kill_self=True)
 
     if initializer:
+        initargs = initargs or ()
         try:
             initializer(*initargs)
         except Exception:
@@ -545,9 +546,9 @@ def raw_runner2(
         if timeout:
             t = threading.Timer(timeout, timed_out)
             t.start()
-            deactivate_timer = lambda: t.cancel()
+            deactivate_timer = lambda: t.cancel()  # noqa: E731
         else:
-            deactivate_timer = lambda: None
+            deactivate_timer = lambda: None  # noqa: E731
 
         evt = threading.Event()
 
@@ -600,10 +601,11 @@ def raw_runner2(
             deactivate_parentless_self_destruct()
 
     if finitializer:
+        finitargs = finitargs or ()
         try:
             finitializer(*finitargs)
-        except:
-            logger.exception(f"finitializer failed")
+        except BaseException:
+            logger.exception("finitializer failed")
 
 
 def kill_proc_tree_in_process_daemon(pid, sig):  # pragma: no cover
