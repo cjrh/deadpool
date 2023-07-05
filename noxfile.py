@@ -1,3 +1,5 @@
+import shlex
+
 import nox
 
 
@@ -8,10 +10,30 @@ import nox
         "3.11",
     ]
 )
-def tests(session):
+def test(session):
     session.install(".")
     session.install("pytest")
     session.run("pytest")
+
+
+@nox.session(
+    python=[
+        "3.11",
+    ]
+)
+def testcov(session):
+    session.install(".")
+    session.install("pytest", "pytest-html", "coverage")
+    session.run(
+        *shlex.split(
+            "coverage run --concurrency=multiprocessing,thread "
+            "-m pytest "
+            " --html=report.html --self-contained-html"
+        )
+    )
+    session.run(*shlex.split("coverage combine"))
+    session.run(*shlex.split("coverage report"))
+    session.run(*shlex.split("coverage html"))
 
 
 @nox.session(tags=["style", "fix"], python=False)

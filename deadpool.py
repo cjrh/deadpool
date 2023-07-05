@@ -5,6 +5,7 @@ Deadpool
 
 """
 import concurrent.futures
+import ctypes
 import logging
 import multiprocessing as mp
 import os
@@ -116,7 +117,7 @@ class WorkerProcess:
     def is_alive(self):
         return self.process.is_alive()
 
-    def results_are_available(self, block_for: int = 0.2):
+    def results_are_available(self, block_for: float = 0.2):
         return self.connection_receive_msgs_from_process.poll(timeout=block_for)
 
     def get_results(self):
@@ -500,9 +501,11 @@ def raw_runner2(
     initargs,
     finitializer: Optional[Callable] = None,
     finitargs: Optional[Tuple] = None,
+    mem_clear_threshold_bytes: Optional[int] = None,
 ):
     logging.basicConfig(level=logging.DEBUG)
-    pid = os.getpid()
+    proc = psutil.Process()
+    pid = proc.pid
     lock = threading.Lock()
 
     def conn_send_safe(obj):
@@ -600,6 +603,11 @@ def raw_runner2(
             deactivate_timer()
             deactivate_parentless_self_destruct()
 
+            if mem_clear_threshold_bytes is not None:
+                mem = proc.memory_info().rss
+                if mem > mem_clear_threshold_bytes:
+                    trim_memory()
+
     if finitializer:
         finitargs = finitargs or ()
         try:
@@ -647,3 +655,10 @@ def kill_proc_tree(
 
     gone, alive = psutil.wait_procs(children, timeout=timeout, callback=on_terminate)
     return (gone, alive)
+
+
+def trim_memory() -> None:
+    """Tell malloc to give all the unused memory back to the OS."""
+    if sys.platform == "linux":
+        libc = ctypes.CDLL("libc.so.6")
+        libc.malloc_trim(0)

@@ -423,6 +423,11 @@ def test_cancel_and_kill():
             fut.result()
 
 
+def test_trim_memory():
+    """Just testing it doesn't fail."""
+    deadpool.trim_memory()
+
+
 @contextmanager
 def elapsed():
     t0 = time.perf_counter()
