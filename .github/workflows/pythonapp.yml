@@ -48,7 +48,7 @@ jobs:
 
     - name: Test with coverage
       run: |
-        nox -s testcov-${{ matrix.python_version }}
+        nox -s testcov-${{ matrix.python-version }}
 
     - name: Extract branch name
       shell: bash
