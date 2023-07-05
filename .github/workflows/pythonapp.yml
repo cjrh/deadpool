@@ -43,11 +43,12 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip wheel
+        pip install nox
         pip install '.[test]'
 
-    - name: Test with pytest
+    - name: Test with coverage
       run: |
-        pytest --cov deadpool tests/
+        nox -s testcov-${{ matrix.python_version }}
 
     - name: Extract branch name
       shell: bash
