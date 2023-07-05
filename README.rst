@@ -490,6 +490,50 @@ when creating the instance:
    ):
        fut = exe.submit(...)
 
+Developer Workflow
+------------------
+
+nox
+^^^
+This project uses ``nox``. Follow the instructions for installing
+nox at their page, and then come back here.
+
+While nox can be configured so that all the tools for each of
+the tasks can be installed automatically when run, this takes
+too much time and so I've decided that you should just have
+the following tools in your environment, ready to go. They
+do not need to be installed in the same venv or anything like
+that. I've found a convenient way to do this is with ``pipx``.
+For example, to install ``black`` using ``pipx`` you can do
+the following:
+
+.. code-block:: shell
+
+   $ pipx install black
+
+You must do the same for ``isort`` and ``ruff``. See the following
+sections for actually using ``nox`` to perform dev actions.
+
+tests
+^^^^^
+
+To run the tests:
+
+.. code-block:: shell
+
+   $ nox -s tests
+
+style
+^^^^^
+
+To apply style fixes, and check for any remaining lints,
+
+.. code-block:: shell
+
+   $ nox -t style
+
+
+
 
 .. _shutdown: https://docs.python.org/3/library/concurrent.futures.html?highlight=brokenprocesspool#concurrent.futures.Executor.shutdown
 .. _ProcessPoolExecutor: https://docs.python.org/3/library/concurrent.futures.html?highlight=broken%20process%20pool#processpoolexecutor
