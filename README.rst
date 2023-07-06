@@ -532,7 +532,36 @@ To apply style fixes, and check for any remaining lints,
 
    $ nox -t style
 
+release
+^^^^^^^
 
+This project uses flit to release the package to pypi. The whole
+process isn't as automated as I would like, but this is what
+I currently do:
+
+1. Ensure that ``main`` branch is fully up to date with all to
+   be released, and all the tests succeed.
+2. Change the ``__version__`` field in ``deadpool.py``. Flit
+   uses this to stamp the version.
+3. Verify that ``flit build`` succeeds. This will produce a
+   wheel in the ``dist/`` directory. You can inspect this
+   wheel to ensure it contains only what is necessary. This
+   wheel will be what is uploaded to PyPI.
+4. **Commit the changed ``__version__``**. Easy to forget this
+   step, resulting in multiple awkward releases to try to
+   get the state all correct again.
+5. Now create the git tag and push to github:
+
+   .. code-block:: shell
+
+        $ git tag YYYY.MM.patch
+        $ git push --tags origin main
+
+6. Now deploy to PyPI:
+
+   .. code-block:: shell
+
+        $ flit publish
 
 
 .. _shutdown: https://docs.python.org/3/library/concurrent.futures.html?highlight=brokenprocesspool#concurrent.futures.Executor.shutdown
