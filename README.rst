@@ -109,6 +109,12 @@ your decision process about whether this makes sense for your use-case:
   ``max_tasks_per_child`` parameter (a new feature in
   Python 3.11, although it was available in `multiprocessing.Pool`_
   since Python 3.2).
+- ``Deadpool`` tasks can have priorities. When the executor chooses
+  the next pending task to schedule to a subprocess, it chooses the
+  pending task with the highest priority. This gives you a way of
+  prioritizing certain kinds of tasks. For example, you might give
+  UI-sensitive tasks a higher priority to deliver a more snappy
+  user experience to your users.
 - ``Deadpool`` defaults to the `forkserver <https://docs.python.org/3.11/library/multiprocessing.html#contexts-and-start-methods>`_ multiprocessing
   context, unlike the stdlib pool which defaults to ``fork`` on
   Linux. It's just a setting though, you can change it in the same way as
@@ -233,7 +239,9 @@ Handling OOM killed situations
 As long as the OOM killer terminates the subprocess (and not the main process),
 which is likely because it'll be your subprocess that is using too much
 memory, this will not hurt the pool, and it will be able to receive and
-process more tasks.
+process more tasks. Note that this event will show up as a ``ProcessError``
+exception when accessing the future, so you have a way of at least tracking
+these events.
 
 Design Details
 --------------
@@ -242,7 +250,7 @@ Typical Example - with timeouts
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 Here's a typical example of how code using Deadpool might look. The
-output of this code should be similar to the following:
+output of the code further below should be similar to the following:
 
 .. code-block:: bash
 
@@ -355,7 +363,7 @@ Below is the code.
   queue. If ``max_backlog`` is too low, then the window of prioritization
   will not include tasks submitted later which might have higher priorities
   than earlier-submitted tasks. The ``submit`` call will in fact block
-  if the ``max_backlog`` depth has been reached.
+  once the ``max_backlog`` depth has been reached.
 
 Controlling the backlog of submitted tasks
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -439,6 +447,15 @@ system process. That can be configured like so:
             print(f"My task is running on process {fut.pid}")
 
         f.add_pid_callback(cb)
+
+Obviously, both kinds of callbacks can be added:
+
+.. code-block:: python
+
+    with deadpool.Deadpool() as exe:
+        f = exe.submit(work)
+        f.add_pid_callback(lambda fut: f"Started on {fut.pid=}")
+        f.add_done_callback(lambda fut: f"Completed {fut.pid=}")
 
 More about shutdown
 ^^^^^^^^^^^^^^^^^^^
