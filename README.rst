@@ -561,6 +561,13 @@ To apply style fixes, and check for any remaining lints,
 
    $ nox -t style
 
+docs
+^^^^
+
+The only docs currently are this README, which uses RST. Github 
+uses `docutils <https://docutils.sourceforge.io/docs/ref/rst/directives.html>`_
+to render RST.
+
 release
 ^^^^^^^
 
