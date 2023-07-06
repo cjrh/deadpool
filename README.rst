@@ -81,7 +81,9 @@ In my use-case, we had extensive logging and monitoring to alert
 us if any tasks failed; but it was paramount that our services
 continue to operate even when tasks got killed in OOM scenarios,
 or specific tasks took too long. This is the primary trade-off
-that ``Deadpool`` offers.
+that ``Deadpool`` offers: the pool will not break, but tasks
+can receive SIGKILL under certain conditions. This trade-off
+is likely fine if you've seen many OOMs break your pools.
 
 I also tried using the `Pebble <https://github.com/noxdafox/pebble>`_
 community process pool. This is a cool project, featuring several
@@ -90,42 +92,47 @@ more resilient operation. However, during testing I found several
 occurrences of a mysterious `RuntimeError`_ that caused the Pebble
 pool to become broken and no longer accept new tasks.
 
-My goal with ``Deadpool`` is to make a process pool executor that
-is impossible to break. The tradeoffs are that I care less about:
-
-- being cross-platform
-- optimizing per-task latency
+My goal with ``Deadpool`` is that **the pool must never enter
+a broken state**. Any means by which that can happen will be
+considered a bug.
 
 What differs from `ProcessPoolExecutor`_?
 -----------------------------------------
 
 ``Deadpool`` is generally similar to `ProcessPoolExecutor`_ since it executes
 tasks in subprocesses, and implements the standard ``Executor`` abstract
-interface. However, it differs in the following ways:
+interface. We can draw a few comparisons to the stdlib pool to guide
+your decision process about whether this makes sense for your use-case:
 
-- ``Deadpool`` makes a new subprocess for every task submitted to
-  the pool (up to the ``max_workers`` limit). It is like having
-  ``max_tasks_per_child == 1`` (a new feature in
+- ``Deadpool`` precreates all subprocesses up to the pool size.
+- ``Deadpool`` also supports the
+  ``max_tasks_per_child`` parameter (a new feature in
   Python 3.11, although it was available in `multiprocessing.Pool`_
-  since Python 3.2). I have ideas about making this configurable, but
-  for now this is a much less important than overall resilience of
-  the pool. This also means that ``Deadpool`` doesn't suffer from
-  long-lived subprocesses being affected by memory leaks, usually
-  created by native extensions.
+  since Python 3.2).
 - ``Deadpool`` defaults to the `forkserver <https://docs.python.org/3.11/library/multiprocessing.html#contexts-and-start-methods>`_ multiprocessing
   context, unlike the stdlib pool which defaults to ``fork`` on
   Linux. It's just a setting though, you can change it in the same way as
-  with the stdlib pool.
-- ``Deadpool`` does not keep a pool of processes around indefinitely.
-  There will only be as many concurrent processes running as there
-  is work to be done, up to the limit set by the ``max_workers``
-  parameter; but if there are fewer tasks to be executed, there will
-  be fewer active subprocesses. When there are no pending or active
-  tasks, there will be *no subprocesses present*. They are created
-  on demand as necessary and disappear when not required.
+  with the stdlib pool. Like the stdlib, I strongly advise you to avoid
+  using ``fork`` because propagation threads and locks via fork is
+  going to ruin your day eventually.
+- ``Deadpool`` can ask the system allocator (Linux only) to return
+  unused memory back to the OS based on exceeding a max threshold RSS.
+  For long-running pools and modern
+  kernels, the system memory allocator can hold onto unused memory
+  for a surprisingly long time, and coupled with bloat due to
+  memory fragmentation, this can result in carrying very large
+  RSS values in your pool. The ``max_tasks_per_child`` helps with
+  this because a subprocess is entirely erased when the max is
+  reached, but it does mean that periodically there will be a small
+  latency penalty from constructing the replacement subprocess. In
+  my opinion, ``max_tasks_per_child`` is appropriate for when you
+  know or suspect there's a real memory leak somewhere in your code
+  (or a 3rd-party package!), and the easiest way to deal with that
+  right now is just to periodically remove a process.
 - ``Deadpool`` tasks can have timeouts. When a task hits the timeout,
   the underlying subprocess in the pool is killed with ``SIGKILL``.
-  The entire process tree of that subprocess is killed.
+  The entire process tree of that subprocess is killed. Your application
+  logic needs to handle this. The ``finalizer`` will not run.
 - ``Deadpool`` tasks can have priorities. The priority is set in the
   ``submit()`` call. See the examples later in this document for further
   discussion on priorities.
@@ -150,7 +157,8 @@ interface. However, it differs in the following ways:
   could be used for things like flushing pending monitoring messages,
   such as traces and so on.
 - ``Deadpool`` currently only works on Linux. There isn't any specific
-  reason it can't work on other platforms.
+  reason it can't work on other platforms. The malloc trim feature also
+  requires a glibc system, so probably won't work on Alpine.
 
 Show me some code
 -----------------
