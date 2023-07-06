@@ -51,6 +51,7 @@ implementation.
 .. contents::
    :local:
    :backlinks: entry
+   :numbered:
 
 Installation
 ------------
