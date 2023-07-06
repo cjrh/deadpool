@@ -52,15 +52,15 @@ to understand that ``Deadpool`` makes very specific tradeoffs that
 can result in quite different behaviour to the stdlib
 implementation.
 
+Installation
+------------
+
 .. sectnum::
-   :start: 2
 
 .. contents::
    :local:
+   :depth: 2
    :backlinks: entry
-
-Installation
-------------
 
 The python package name is *deadpool-executor*, so to install
 you must type ``$ pip install deadpool-executor``. The import
