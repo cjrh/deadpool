@@ -36,9 +36,6 @@
 
    <h1>deadpool</h1>
 
-deadpool
-========
-
 ``Deadpool`` is a process pool that is really hard to kill.
 
 ``Deadpool`` is an implementation of the ``Executor`` interface
@@ -52,15 +49,15 @@ to understand that ``Deadpool`` makes very specific tradeoffs that
 can result in quite different behaviour to the stdlib
 implementation.
 
-Installation
-------------
-
 .. sectnum::
 
 .. contents::
    :local:
    :depth: 2
    :backlinks: entry
+
+Installation
+------------
 
 The python package name is *deadpool-executor*, so to install
 you must type ``$ pip install deadpool-executor``. The import
