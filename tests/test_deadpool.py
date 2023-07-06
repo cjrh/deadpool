@@ -106,8 +106,13 @@ def test_cancel_all_futures():
         assert f.cancelled()
 
 
-def test_simple():
-    with deadpool.Deadpool() as exe:
+@pytest.mark.parametrize('malloc_threshold', [
+    None, 0, 1_000_000
+])
+def test_simple(malloc_threshold):
+    with deadpool.Deadpool(
+        malloc_trim_rss_memory_threshold_bytes=malloc_threshold
+    ) as exe:
         fut = exe.submit(t, 0.5)
         result = fut.result()
 

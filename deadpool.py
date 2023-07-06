@@ -50,6 +50,11 @@ class WorkerProcess:
     connection_send_msgs_to_process: Connection
     # Stats
     tasks_ran_counter: int
+    # Controls
+    # If the subprocess RSS memory is above this threshold,
+    # ask the system allocator to release unused memory back
+    # to the OS.
+    malloc_trim_rss_memory_threshold_bytes: Optional[int] = None
 
     def __init__(
         self,
@@ -59,6 +64,7 @@ class WorkerProcess:
         finargs=(),
         daemon=True,
         mp_context="forkserver",
+        malloc_trim_rss_memory_threshold_bytes=None,
     ):
         if isinstance(mp_context, str):
             mp_context = mp.get_context(mp_context)
@@ -78,6 +84,7 @@ class WorkerProcess:
                 initargs,
                 finalizer,
                 finargs,
+                malloc_trim_rss_memory_threshold_bytes,
             ),
         )
 
@@ -183,6 +190,7 @@ class Deadpool(Executor):
         shutdown_wait: Optional[bool] = None,
         shutdown_cancel_futures: Optional[bool] = None,
         daemon=True,
+        malloc_trim_rss_memory_threshold_bytes: Optional[int] = None,
     ) -> None:
         super().__init__()
 
@@ -210,10 +218,13 @@ class Deadpool(Executor):
         self.shutdown_wait = shutdown_wait
         self.shutdown_cancel_futures = shutdown_cancel_futures
         self.daemon = daemon
+        self.malloc_trim_rss_memory_threshold_bytes = (
+            malloc_trim_rss_memory_threshold_bytes
+        )
 
         # TODO: overcommit
         self.workers = SimpleQueue()
-        for i in range(self.pool_size):
+        for _ in range(self.pool_size):
             self.add_worker_to_pool()
         # When a worker is running a job, it will be removed from
         # the workers queue, and added to the busy_workers set.
@@ -237,6 +248,7 @@ class Deadpool(Executor):
             finargs=self.finitargs,
             mp_context=self.ctx,
             daemon=self.daemon,
+            malloc_trim_rss_memory_threshold_bytes=self.malloc_trim_rss_memory_threshold_bytes,
         )
         self.workers.put(worker)
 
