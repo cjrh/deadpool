@@ -1,4 +1,6 @@
-import random, time
+import random
+import time
+
 import deadpool
 
 

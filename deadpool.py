@@ -4,23 +4,25 @@ Deadpool
 
 
 """
-import os
-import sys
-import signal
-import multiprocessing as mp
-from multiprocessing.connection import Connection
 import concurrent.futures
-from concurrent.futures import Executor, CancelledError, as_completed, InvalidStateError
-import threading
-from queue import Queue, Empty, PriorityQueue
-from typing import Callable, Optional
+import ctypes
 import logging
+import multiprocessing as mp
+import os
+import pickle
+import signal
+import sys
+import threading
+import traceback
 import typing
 import weakref
+from concurrent.futures import CancelledError, Executor, InvalidStateError, as_completed
 from dataclasses import dataclass, field
+from multiprocessing.connection import Connection
+from queue import Empty, PriorityQueue, Queue, SimpleQueue
+from typing import Callable, Optional, Tuple
 
 import psutil
-
 
 __version__ = "2022.9.6"
 __all__ = [
@@ -41,6 +43,98 @@ class PrioritizedItem:
     item: typing.Any = field(compare=False)
 
 
+@dataclass(init=False)
+class WorkerProcess:
+    process: mp.Process
+    connection_receive_msgs_from_process: Connection
+    connection_send_msgs_to_process: Connection
+    # Stats
+    tasks_ran_counter: int
+    # Controls
+    # If the subprocess RSS memory is above this threshold,
+    # ask the system allocator to release unused memory back
+    # to the OS.
+    malloc_trim_rss_memory_threshold_bytes: Optional[int] = None
+
+    def __init__(
+        self,
+        initializer=None,
+        initargs=(),
+        finalizer=None,
+        finargs=(),
+        daemon=True,
+        mp_context="forkserver",
+        malloc_trim_rss_memory_threshold_bytes=None,
+    ):
+        if isinstance(mp_context, str):
+            mp_context = mp.get_context(mp_context)
+
+        # For the process to send info OUT OF the process
+        conn_receiver, conn_sender = mp.Pipe(duplex=False)
+        # For sending work INTO the process
+        conn_receiver2, conn_sender2 = mp.Pipe(duplex=False)
+        p = mp_context.Process(
+            daemon=daemon,
+            target=raw_runner2,
+            args=(
+                conn_sender,
+                conn_receiver2,
+                os.getpid(),
+                initializer,
+                initargs,
+                finalizer,
+                finargs,
+                malloc_trim_rss_memory_threshold_bytes,
+            ),
+        )
+
+        p.start()
+        self.process = p
+        self.connection_receive_msgs_from_process = conn_receiver
+        self.connection_send_msgs_to_process = conn_sender2
+        self.tasks_ran_counter = 0
+
+    def __hash__(self):
+        return hash(self.process.pid)
+
+    @property
+    def pid(self):
+        return self.process.pid
+
+    def get_rss_bytes(self) -> int:
+        return psutil.Process(pid=self.pid).memory_info().rss
+
+    def submit_job(self, job):
+        self.tasks_ran_counter += 1
+        self.connection_send_msgs_to_process.send(job)
+
+    def shutdown(self, wait=True):
+        if not self.process.is_alive():
+            return
+
+        self.connection_receive_msgs_from_process.close()
+
+        if self.connection_send_msgs_to_process.writable:
+            try:
+                self.connection_send_msgs_to_process.send(None)
+            except BrokenPipeError:
+                pass
+            else:
+                self.connection_send_msgs_to_process.close()
+
+        if wait:
+            self.process.join()
+
+    def is_alive(self):
+        return self.process.is_alive()
+
+    def results_are_available(self, block_for: float = 0.2):
+        return self.connection_receive_msgs_from_process.poll(timeout=block_for)
+
+    def get_results(self):
+        return self.connection_receive_msgs_from_process.recv()
+
+
 class Future(concurrent.futures.Future):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
@@ -58,7 +152,7 @@ class Future(concurrent.futures.Future):
             try:
                 self.pid_callback(self)
             except Exception:  # pragma: no cover
-                logger.exception(f"Error calling pid_callback")
+                logger.exception("Error calling pid_callback")
 
     def add_pid_callback(self, fn):
         self.pid_callback = fn
@@ -88,6 +182,9 @@ class Deadpool(Executor):
     def __init__(
         self,
         max_workers: Optional[int] = None,
+        min_workers: Optional[int] = None,
+        max_tasks_per_child: Optional[int] = None,
+        max_worker_memory_bytes: Optional[int] = None,
         mp_context=None,
         initializer=None,
         initargs=(),
@@ -96,6 +193,8 @@ class Deadpool(Executor):
         max_backlog=5,
         shutdown_wait: Optional[bool] = None,
         shutdown_cancel_futures: Optional[bool] = None,
+        daemon=True,
+        malloc_trim_rss_memory_threshold_bytes: Optional[int] = None,
     ) -> None:
         super().__init__()
 
@@ -111,6 +210,9 @@ class Deadpool(Executor):
         self.finitializer = finalizer
         self.finitargs = finalargs
         self.pool_size = max_workers or len(os.sched_getaffinity(0))
+        self.min_workers = min_workers or self.pool_size
+        self.max_tasks_per_child = max_tasks_per_child
+        self.max_worker_memory_bytes = max_worker_memory_bytes
         self.submitted_jobs: PriorityQueue[PrioritizedItem] = PriorityQueue(
             maxsize=max_backlog
         )
@@ -119,6 +221,21 @@ class Deadpool(Executor):
         self.closed = False
         self.shutdown_wait = shutdown_wait
         self.shutdown_cancel_futures = shutdown_cancel_futures
+        self.daemon = daemon
+        self.malloc_trim_rss_memory_threshold_bytes = (
+            malloc_trim_rss_memory_threshold_bytes
+        )
+
+        # TODO: overcommit
+        self.workers = SimpleQueue()
+        for _ in range(self.pool_size):
+            self.add_worker_to_pool()
+        # When a worker is running a job, it will be removed from
+        # the workers queue, and added to the busy_workers set.
+        # When a worker successfully completes a job, it will be
+        # added back to the workers queue, and removed from the
+        # busy_workers set.
+        self.busy_workers = set()  #  weakref.WeakSet()
 
         # THE ONLY ACTIVE, PERSISTENT STATE IN DEADPOOL IS THIS THREAD
         # BELOW. PROTECT IT AT ALL COSTS.
@@ -126,6 +243,18 @@ class Deadpool(Executor):
             target=self.runner, name="deadpool.runner", daemon=True
         )
         self.runner_thread.start()
+
+    def add_worker_to_pool(self):
+        worker = WorkerProcess(
+            initializer=self.initializer,
+            initargs=self.initargs,
+            finalizer=self.finitializer,
+            finargs=self.finitargs,
+            mp_context=self.ctx,
+            daemon=self.daemon,
+            malloc_trim_rss_memory_threshold_bytes=self.malloc_trim_rss_memory_threshold_bytes,
+        )
+        self.workers.put(worker)
 
     def runner(self):
         while True:
@@ -141,7 +270,7 @@ class Deadpool(Executor):
                 # TODO: this probably isn't necessary, since cleanup is happening
                 # in the shutdown method anyway.
                 cancel_all_futures_on_queue(self.submitted_jobs)
-                logger.debug(f"Got shutdown event, leaving runner.")
+                logger.debug("Got shutdown event, leaving runner.")
                 return
 
             *_, fut = job
@@ -154,36 +283,69 @@ class Deadpool(Executor):
                 self.running_jobs.get()
                 continue
 
-            t = threading.Thread(target=self.run_process, args=job)
+            t = threading.Thread(target=self.run_task, args=job, daemon=True)
             t.start()
 
-    def run_process(self, fn, args, kwargs, timeout, fut: Future):
+    def get_process(self) -> WorkerProcess:
+        bw = len(self.busy_workers)
+        mw = self.pool_size
+        qs = self.workers.qsize()
+
+        total_workers = bw + qs
+        if total_workers < mw and qs == 0:
+            self.add_worker_to_pool()
+
+        wp = self.workers.get()
+        self.busy_workers.add(wp)
+        return wp
+
+    def done_with_process(self, wp: WorkerProcess):
+        self.busy_workers.remove(wp)
+
+        bw = len(self.busy_workers)
+        mw = self.min_workers
+        qs = self.workers.qsize()
+
+        total_workers = bw + qs
+        if total_workers > mw and qs > 0:
+            wp.shutdown(wait=False)
+            return
+
+        if not wp.is_alive():
+            self.add_worker_to_pool()
+            return
+
+        if self.max_tasks_per_child is not None:
+            if wp.tasks_ran_counter >= self.max_tasks_per_child:
+                wp.shutdown(wait=False)
+                self.add_worker_to_pool()
+                return
+
+        if self.max_worker_memory_bytes is not None:
+            if wp.get_rss_bytes() >= self.max_worker_memory_bytes:
+                wp.shutdown(wait=False)
+                self.add_worker_to_pool()
+                return
+
+        self.workers.put(wp)
+
+    def run_task(self, fn, args, kwargs, timeout, fut: Future):
         try:
-            conn_receiver, conn_sender = mp.Pipe(duplex=False)
-            p = self.ctx.Process(
-                target=raw_runner,
-                args=(
-                    conn_sender,
-                    fn,
-                    args,
-                    kwargs,
-                    timeout,
-                    os.getpid(),
-                    self.initializer,
-                    self.initargs,
-                    self.finitializer,
-                    self.finitargs,
-                ),
-            )
-            p.start()
-            fut.pid = p.pid
+            worker: WorkerProcess = self.get_process()
+            worker.submit_job((fn, args, kwargs, timeout))
+            fut.pid = worker.pid
             self.running_futs.add(fut)
 
             while True:
-                if conn_receiver.poll(0.2):
+                if worker.results_are_available():
                     try:
-                        results = conn_receiver.recv()
+                        results = worker.get_results()
+                    except EOFError:
+                        fut.set_exception(
+                            ProcessError("Worker process died unexpectedly")
+                        )
                     except BaseException as e:
+                        logger.debug(f"Unexpected exception from worker: {e}")
                         fut.set_exception(e)
                     else:
                         if isinstance(results, BaseException):
@@ -191,14 +353,11 @@ class Deadpool(Executor):
                         else:
                             fut.set_result(results)
                     finally:
-                        try:
-                            conn_receiver.close()
-                        finally:
-                            break
-                elif not p.is_alive():
-                    logger.debug(f"p is no longer alive: {p}")
+                        break
+                elif not worker.is_alive():
+                    logger.debug(f"p is no longer alive: {worker.process}")
                     try:
-                        signame = signal.strsignal(-p.exitcode)
+                        signame = signal.strsignal(-worker.process.exitcode)
                     except ValueError:  # pragma: no cover
                         signame = "Unknown"
 
@@ -207,8 +366,8 @@ class Deadpool(Executor):
                         # it. If that's the case we'll do nothing. Otherwise, put
                         # an exception reporting the unexpected situation.
                         msg = (
-                            f"Subprocess {p.pid} completed unexpectedly with exitcode {p.exitcode} "
-                            f"({signame})"
+                            f"Subprocess {worker.pid} completed unexpectedly with "
+                            f"exitcode {worker.process.exitcode} ({signame})"
                         )
                         try:
                             fut.set_exception(ProcessError(msg))
@@ -222,7 +381,7 @@ class Deadpool(Executor):
                 else:
                     pass  # pragma: no cover
 
-            p.join()
+            self.done_with_process(worker)
         finally:
             self.submitted_jobs.task_done()
 
@@ -232,7 +391,7 @@ class Deadpool(Executor):
             try:
                 self.running_jobs.get_nowait()
             except Empty:  # pragma: no cover
-                logger.warning(f"Weird error, did not expect running jobs to be empty")
+                logger.warning("Weird error, did not expect running jobs to be empty")
 
     def submit(
         self,
@@ -282,8 +441,9 @@ class Deadpool(Executor):
             )
         except TimeoutError:  # pragma: no cover
             logger.warning(
-                "Timed out putting None on the submit queue. This should not be possible "
-                " and might be a bug in deadpool."
+                "Timed out putting None on the submit queue. This "
+                "should not be possible "
+                "and might be a bug in deadpool."
             )
 
         # Up till this point, all the pending work that has been
@@ -297,18 +457,27 @@ class Deadpool(Executor):
         if (not wait) and cancel_futures:
             running_futs = list(self.running_futs)
             for fut in running_futs:
-                try:
-                    if fut.pid:
-                        kill_proc_tree(fut.pid)
-                except Exception as e:
-                    logger.warning(f"Got error cancelling {fut.pid=}: {e}")
-                finally:
-                    fut.cancel()
+                fut.cancel_and_kill_if_running()
 
         logger.debug("waiting for submitted_jobs to join...")
         self.submitted_jobs.join()
 
-        return super().shutdown(wait, cancel_futures=cancel_futures)
+        super().shutdown(wait, cancel_futures=cancel_futures)
+
+        # We can now remove all other processes hanging around
+        # in the background.
+        while not self.workers.empty():
+            try:
+                worker = self.workers.get_nowait()
+                worker.shutdown()
+            except Empty:
+                break
+
+        # There may be a few processes left in the
+        # `busy_workers` queue. Shut them down too.
+        while self.busy_workers:
+            worker = self.busy_workers.pop()
+            worker.shutdown()
 
     def __enter__(self):
         return self
@@ -340,19 +509,19 @@ def cancel_all_futures_on_queue(q: Queue):
             break
 
 
-def raw_runner(
+def raw_runner2(
     conn: Connection,
-    fn,
-    args,
-    kwargs,
-    timeout,
+    conn_receiver: Connection,
     parent_pid,
     initializer,
     initargs,
-    finitializer,
-    finitargs,
+    finitializer: Optional[Callable] = None,
+    finitargs: Optional[Tuple] = None,
+    mem_clear_threshold_bytes: Optional[int] = None,
 ):
-    pid = os.getpid()
+    logging.basicConfig(level=logging.DEBUG)
+    proc = psutil.Process()
+    pid = proc.pid
     lock = threading.Lock()
 
     def conn_send_safe(obj):
@@ -361,7 +530,7 @@ def raw_runner(
                 conn.send(obj)
         except BrokenPipeError:  # pragma: no cover
             logger.debug("Pipe not usable")
-        except:
+        except BaseException:
             logger.exception("Unexpected pipe error")
 
     def timed_out():
@@ -371,60 +540,96 @@ def raw_runner(
         # kill_proc_tree_in_process_daemon(pid, signal.SIGKILL)
         kill_proc_tree(pid, sig=signal.SIGKILL, allow_kill_self=True)
 
-    if timeout:
-        t = threading.Timer(timeout, timed_out)
-        t.start()
-        deactivate_timer = lambda: t.cancel()
-    else:
-        deactivate_timer = lambda: None
-
-    evt = threading.Event()
-
-    def self_destruct_if_parent_disappers():
-        """Poll every 5 seconds to see whether the parent is still
-        alive.
-        """
-        while True:
-            if evt.wait(2.0):
-                return
-
-            if not psutil.pid_exists(parent_pid):
-                logger.warning(f"Parent {parent_pid} is gone, self-destructing.")
-                evt.set()
-                # kill_proc_tree_in_process_daemon(pid, signal.SIGKILL)
-                kill_proc_tree(pid, sig=signal.SIGKILL, allow_kill_self=True)
-                return
-
-    tparent = threading.Thread(target=self_destruct_if_parent_disappers, daemon=True)
-    tparent.start()
-    deactivate_parentless_self_destruct = lambda: evt.set()
-
     if initializer:
+        initargs = initargs or ()
         try:
             initializer(*initargs)
-        except:
-            logger.exception(f"Initializer failed")
+        except Exception:
+            logger.exception("Initializer failed")
 
-    try:
-        results = fn(*args, **kwargs)
-    except BaseException as e:
-        conn_send_safe(e)
-    else:
-        conn_send_safe(results)
-    finally:
-        deactivate_timer()
-        deactivate_parentless_self_destruct()
+    while True:
+        # Wait for some work.
+        try:
+            job = conn_receiver.recv()
+        except EOFError:
+            logger.debug("Received EOF, exiting.")
+            break
+
+        if job is None:
+            logger.debug("Received None, exiting.")
+            break
+
+        # Real work, unpack.
+        fn, args, kwargs, timeout = job
+
+        if timeout:
+            t = threading.Timer(timeout, timed_out)
+            t.start()
+            deactivate_timer = lambda: t.cancel()  # noqa: E731
+        else:
+            deactivate_timer = lambda: None  # noqa: E731
+
+        evt = threading.Event()
+
+        def self_destruct_if_parent_disappers():
+            """Poll every 5 seconds to see whether the parent is still
+            alive.
+            """
+            while True:
+                if evt.wait(2.0):
+                    return
+
+                if not psutil.pid_exists(parent_pid):
+                    logger.warning(f"Parent {parent_pid} is gone, self-destructing.")
+                    evt.set()
+                    # kill_proc_tree_in_process_daemon(pid, signal.SIGKILL)
+                    kill_proc_tree(pid, sig=signal.SIGKILL, allow_kill_self=True)
+                    return
+
+        tparent = threading.Thread(
+            target=self_destruct_if_parent_disappers, daemon=True
+        )
+        tparent.start()
+
+        def deactivate_parentless_self_destruct():
+            evt.set()
 
         try:
-            conn.close()
-        except BrokenPipeError:  # pragma: no cover
-            logger.error("Pipe not usable")
+            results = fn(*args, **kwargs)
+        except BaseException as e:
+            # Check whether the exception can be pickled. If not we're going
+            # to wrap it. Why do this? It turns out that mp.Connection.send
+            # will try to pickle the exception, and if it can't, it will
+            # lose its mind. I've gotten segfaults in Python with this.
+            try:  # pragma: no cover
+                pickle.dumps(e)
+            except Exception as pickle_error:
+                msg = (
+                    f"An exception occurred but pickling it failed. "
+                    f"The original exception is presented here as a string with "
+                    f"traceback.\n{e}\n{traceback.format_exception(e)}\n\n"
+                    f"The reason for the pickking failure is the following:\n"
+                    f"{traceback.format_exception(pickle_error)}"
+                )
+                e = ProcessError(msg)
+            conn_send_safe(e)
+        else:
+            conn_send_safe(results)
+        finally:
+            deactivate_timer()
+            deactivate_parentless_self_destruct()
 
-        if finitializer:
-            try:
-                finitializer(*finitargs)
-            except:
-                logger.exception(f"Finitializer failed")
+            if mem_clear_threshold_bytes is not None:
+                mem = proc.memory_info().rss
+                if mem > mem_clear_threshold_bytes:
+                    trim_memory()
+
+    if finitializer:
+        finitargs = finitargs or ()
+        try:
+            finitializer(*finitargs)
+        except BaseException:
+            logger.exception("finitializer failed")
 
 
 def kill_proc_tree_in_process_daemon(pid, sig):  # pragma: no cover
@@ -466,3 +671,10 @@ def kill_proc_tree(
 
     gone, alive = psutil.wait_procs(children, timeout=timeout, callback=on_terminate)
     return (gone, alive)
+
+
+def trim_memory() -> None:
+    """Tell malloc to give all the unused memory back to the OS."""
+    if sys.platform == "linux":
+        libc = ctypes.CDLL("libc.so.6")
+        libc.malloc_trim(0)

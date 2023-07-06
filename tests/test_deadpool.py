@@ -1,17 +1,23 @@
 import asyncio
 import logging
 import os
-import pytest
 import queue
-import unittest
 import signal
+import sys
 import time
-
-from concurrent.futures import CancelledError, as_completed, ThreadPoolExecutor
+import unittest
+from concurrent.futures import CancelledError, as_completed
 from contextlib import contextmanager
-from unittest.mock import Mock
+from functools import partial
+
+import pytest
 
 import deadpool
+
+
+@pytest.fixture()
+def logging_initializer():
+    return partial(logging.basicConfig, level=logging.DEBUG)
 
 
 async def test_func():
@@ -100,8 +106,11 @@ def test_cancel_all_futures():
         assert f.cancelled()
 
 
-def test_simple():
-    with deadpool.Deadpool() as exe:
+@pytest.mark.parametrize("malloc_threshold", [None, 0, 1_000_000])
+def test_simple(malloc_threshold):
+    with deadpool.Deadpool(
+        malloc_trim_rss_memory_threshold_bytes=malloc_threshold
+    ) as exe:
         fut = exe.submit(t, 0.5)
         result = fut.result()
 
@@ -113,12 +122,22 @@ def test_simple():
         exe.submit(f)
 
 
+def test_simple_batch(logging_initializer):
+    with deadpool.Deadpool(max_workers=1, initializer=logging_initializer) as exe:
+        futs = [exe.submit(t, 0.1) for _ in range(2)]
+        results = [fut.result() for fut in futs]
+
+    assert results == [0.1] * 2
+
+
 @pytest.mark.parametrize("wait", [True, False])
 @pytest.mark.parametrize("cancel_futures", [True, False])
-def test_shutdown(wait, cancel_futures):
+def test_shutdown(logging_initializer, wait, cancel_futures):
     with deadpool.Deadpool(
+        max_workers=1,
         shutdown_wait=wait,
         shutdown_cancel_futures=cancel_futures,
+        initializer=logging_initializer,
     ) as exe:
         fut = exe.submit(f)
         result = fut.result()
@@ -128,13 +147,13 @@ def test_shutdown(wait, cancel_futures):
 
 @pytest.mark.parametrize("wait", [True, False])
 @pytest.mark.parametrize("cancel_futures", [True, False])
-def test_shutdown_manual(wait, cancel_futures):
+def test_shutdown_manual(logging_initializer, wait, cancel_futures):
     logging.info("Test start")
 
     def callback(*args):
         logging.info(f"fut callback: {args=}")
 
-    exe = deadpool.Deadpool(max_workers=2)
+    exe = deadpool.Deadpool(max_workers=2, initializer=logging_initializer)
     fut1 = exe.submit(t, 2)
     fut1.add_done_callback(callback)
     fut2 = exe.submit(t, 2)
@@ -148,7 +167,11 @@ def test_shutdown_manual(wait, cancel_futures):
     logging.info(f"{exe.submitted_jobs.qsize()=}")
     logging.info(f"{exe.running_futs=}")
     exe.shutdown(wait=wait, cancel_futures=cancel_futures)
-    logging.info(f"shutdown has unblocked")
+    logging.info("shutdown has unblocked")
+
+    logging.debug(f"{fut1.pid=}")
+    logging.debug(f"{fut2.pid=}")
+    logging.debug(f"{fut3.pid=}")
 
     if wait is False:
         if cancel_futures is True:
@@ -298,20 +321,20 @@ def test_pid_callback():
 
 
 def f_sub():
-    with deadpool.Deadpool() as exe:
+    with deadpool.Deadpool(daemon=False) as exe:
         fut = exe.submit(g_sub)
         return fut.result()
 
 
 def g_sub():
     with deadpool.Deadpool() as exe:
-        futs = exe.map(time.sleep, [55.0] * 10)
+        _futs = exe.map(time.sleep, [55.0] * 10)
 
     return 123
 
 
 def test_sub_sub_process():
-    with deadpool.Deadpool(max_workers=5) as exe:
+    with deadpool.Deadpool(max_workers=5, daemon=False, mp_context="spawn") as exe:
         f1 = exe.submit(f_sub)
         time.sleep(0.5)
         assert f1.pid
@@ -368,16 +391,30 @@ def raise_custom_exception(exc_class):
     [
         (MyBadException, MyBadException, "(1, 2, 3)"),
         (MyBadExceptionSetState, ValueError, "failed to unpickle"),
-        (MyBadExceptionReduce, deadpool.ProcessError, "completed unexpectedly"),
-        (MyBadExceptionReduceRaise, deadpool.ProcessError, "completed unexpectedly"),
+        pytest.param(
+            MyBadExceptionReduce,
+            deadpool.ProcessError,
+            "pickling it failed",
+            marks=pytest.mark.skipif(
+                sys.version_info < (3, 10), reason="different message"
+            ),
+        ),
+        pytest.param(
+            MyBadExceptionReduceRaise,
+            deadpool.ProcessError,
+            "pickling it failed",
+            marks=pytest.mark.skipif(
+                sys.version_info < (3, 10), reason="different message"
+            ),
+        ),
     ],
 )
-def test_bad_exception(raises, exc_type, match):
-    with deadpool.Deadpool() as exe:
+def test_bad_exception(logging_initializer, raises, exc_type, match):
+    with deadpool.Deadpool(max_workers=1, initializer=logging_initializer) as exe:
         fut = exe.submit(raise_custom_exception, raises)
 
         with pytest.raises(exc_type, match=match):
-            result = fut.result()
+            _result = fut.result()
 
 
 def test_cancel_and_kill():
@@ -387,6 +424,11 @@ def test_cancel_and_kill():
         fut.cancel_and_kill_if_running()
         with pytest.raises(deadpool.CancelledError):
             fut.result()
+
+
+def test_trim_memory():
+    """Just testing it doesn't fail."""
+    deadpool.trim_memory()
 
 
 @contextmanager
