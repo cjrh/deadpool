@@ -115,8 +115,12 @@ class WorkerProcess:
         self.connection_receive_msgs_from_process.close()
 
         if self.connection_send_msgs_to_process.writable:
-            self.connection_send_msgs_to_process.send(None)
-            self.connection_send_msgs_to_process.close()
+            try:
+                self.connection_send_msgs_to_process.send(None)
+            except BrokenPipeError:
+                pass
+            else:
+                self.connection_send_msgs_to_process.close()
 
         if wait:
             self.process.join()
