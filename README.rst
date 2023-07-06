@@ -32,6 +32,10 @@
     :alt: OpenSSF Scorecard
     :target: https://api.securityscorecards.dev/projects/github.com/cjrh/deadpool
 
+.. raw:: html
+
+   <h1>deadpool</h1>
+
 deadpool
 ========
 
