@@ -53,6 +53,7 @@ can result in quite different behaviour to the stdlib
 implementation.
 
 .. sectnum::
+   :start: 2
 
 .. contents::
    :local:
