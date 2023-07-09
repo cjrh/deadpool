@@ -360,7 +360,9 @@ class Deadpool(Executor):
                             fut.set_result(results)
 
                         if isinstance(results, TimeoutError):
-                            logger.debug(f"TimeoutError on {worker.pid}, setting ok=False")
+                            logger.debug(
+                                f"TimeoutError on {worker.pid}, setting ok=False"
+                            )
                             worker.ok = False
                     finally:
                         break

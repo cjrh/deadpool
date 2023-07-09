@@ -5,12 +5,12 @@ import logging
 import deadpool
 
 logging.basicConfig(level="DEBUG")
-logging.getLogger('deadpool').setLevel("DEBUG")
+logging.getLogger("deadpool").setLevel("DEBUG")
 
 
 def init(*args, **kwargs):
     logging.basicConfig(level="DEBUG")
-    logging.getLogger('deadpool').setLevel("DEBUG")
+    logging.getLogger("deadpool").setLevel("DEBUG")
 
 
 def work():
