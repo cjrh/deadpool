@@ -34,7 +34,7 @@ __all__ = [
     "PoolClosed",
     "as_completed",
 ]
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("deadpool")
 
 
 @dataclass(order=True)
@@ -55,6 +55,7 @@ class WorkerProcess:
     # ask the system allocator to release unused memory back
     # to the OS.
     malloc_trim_rss_memory_threshold_bytes: Optional[int] = None
+    ok: bool = True
 
     def __init__(
         self,
@@ -93,6 +94,7 @@ class WorkerProcess:
         self.connection_receive_msgs_from_process = conn_receiver
         self.connection_send_msgs_to_process = conn_sender2
         self.tasks_ran_counter = 0
+        self.ok = True
 
     def __hash__(self):
         return hash(self.process.pid)
@@ -327,6 +329,10 @@ class Deadpool(Executor):
                 self.add_worker_to_pool()
                 return
 
+        if not wp.ok:
+            self.add_worker_to_pool()
+            return
+
         self.workers.put(wp)
 
     def run_task(self, fn, args, kwargs, timeout, fut: Future):
@@ -352,6 +358,10 @@ class Deadpool(Executor):
                             fut.set_exception(results)
                         else:
                             fut.set_result(results)
+
+                        if isinstance(results, TimeoutError):
+                            logger.debug(f"TimeoutError on {worker.pid}, setting ok=False")
+                            worker.ok = False
                     finally:
                         break
                 elif not worker.is_alive():
@@ -519,7 +529,6 @@ def raw_runner2(
     finitargs: Optional[Tuple] = None,
     mem_clear_threshold_bytes: Optional[int] = None,
 ):
-    logging.basicConfig(level=logging.DEBUG)
     proc = psutil.Process()
     pid = proc.pid
     lock = threading.Lock()
