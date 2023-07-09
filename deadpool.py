@@ -24,7 +24,7 @@ from typing import Callable, Optional, Tuple
 
 import psutil
 
-__version__ = "2023.7.1"
+__version__ = "2023.7.2"
 __all__ = [
     "Deadpool",
     "Future",
