@@ -565,9 +565,7 @@ def raw_runner2(
                 kill_proc_tree(pid, sig=signal.SIGKILL, allow_kill_self=True)
                 return
 
-    tparent = threading.Thread(
-        target=self_destruct_if_parent_disappers, daemon=True
-    )
+    tparent = threading.Thread(target=self_destruct_if_parent_disappers, daemon=True)
     tparent.start()
 
     def deactivate_parentless_self_destruct():
@@ -626,7 +624,6 @@ def raw_runner2(
         else:
             deactivate_timer = lambda: None  # noqa: E731
 
-
         try:
             results = fn(*args, **kwargs)
         except BaseException as e:
@@ -662,7 +659,6 @@ def raw_runner2(
             finitializer(*finitargs)
         except BaseException:
             logger.exception("finitializer failed")
-
 
     # We've reached the end of this function which means this
     # process must exit. However, we started a couple threads
