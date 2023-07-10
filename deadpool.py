@@ -551,6 +551,28 @@ def raw_runner2(
     # monitor thread should be deactivated.
     evt = threading.Event()
 
+    def self_destruct_if_parent_disappers():
+        """Poll every 5 seconds to see whether the parent is still
+        alive.
+        """
+        while True:
+            if evt.wait(2.0):
+                return
+
+            if not psutil.pid_exists(parent_pid):
+                logger.warning(f"Parent {parent_pid} is gone, self-destructing.")
+                evt.set()
+                kill_proc_tree(pid, sig=signal.SIGKILL, allow_kill_self=True)
+                return
+
+    tparent = threading.Thread(
+        target=self_destruct_if_parent_disappers, daemon=True
+    )
+    tparent.start()
+
+    def deactivate_parentless_self_destruct():
+        evt.set()
+
     proc = psutil.Process()
     pid = proc.pid
     lock = threading.Lock()
@@ -605,29 +627,6 @@ def raw_runner2(
             deactivate_timer = lambda: None  # noqa: E731
 
 
-        def self_destruct_if_parent_disappers():
-            """Poll every 5 seconds to see whether the parent is still
-            alive.
-            """
-            while True:
-                if evt.wait(2.0):
-                    return
-
-                if not psutil.pid_exists(parent_pid):
-                    logger.warning(f"Parent {parent_pid} is gone, self-destructing.")
-                    evt.set()
-                    # kill_proc_tree_in_process_daemon(pid, signal.SIGKILL)
-                    kill_proc_tree(pid, sig=signal.SIGKILL, allow_kill_self=True)
-                    return
-
-        tparent = threading.Thread(
-            target=self_destruct_if_parent_disappers, daemon=True
-        )
-        tparent.start()
-
-        def deactivate_parentless_self_destruct():
-            evt.set()
-
         try:
             results = fn(*args, **kwargs)
         except BaseException as e:
@@ -651,7 +650,6 @@ def raw_runner2(
             conn_send_safe(results)
         finally:
             deactivate_timer()
-            deactivate_parentless_self_destruct()
 
             if mem_clear_threshold_bytes is not None:
                 mem = proc.memory_info().rss
@@ -675,7 +673,7 @@ def raw_runner2(
     # work, and since we've already fun the finalizer, we may
     # as well just nuke it. That will remove its memory space
     # and all its threads too.
-    evt.set()
+    deactivate_parentless_self_destruct()
     logger.debug(f"Nuking worker {pid=}")
     kill_proc_tree(pid, sig=signal.SIGKILL, allow_kill_self=True)
 

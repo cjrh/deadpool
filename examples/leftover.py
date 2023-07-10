@@ -2,7 +2,9 @@ import deadpool
 from multiprocessing import Queue, Manager
 import time
 import random
+import logging
 
+logging.basicConfig(level='DEBUG')
 Executor = deadpool.Deadpool
 manager = Manager()
 
@@ -19,12 +21,13 @@ def main():
         max_workers=10,
         min_workers=2,
         daemon=False,
+        max_tasks_per_child=2,
     )
     with exe:
-        for i in range(1000):
+        for i in range(50):
             time.sleep(random.randrange(0, 10) / 10)
-            w = random.randrange(0, 20) / 10
-            exe.submit(worker, results, 1)
+            w = random.randrange(0, 50) / 10
+            exe.submit(worker, results, w, deadpool_timeout=4)
             print(f"{exe.workers.qsize()=} {len(exe.busy_workers)=}")
 
     outcome = []
@@ -32,6 +35,7 @@ def main():
         outcome.append(results.get_nowait())
 
     print(outcome)
+    print(f"{len(outcome)=}")
 
 
 if __name__ == "__main__":
