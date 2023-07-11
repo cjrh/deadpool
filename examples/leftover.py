@@ -4,7 +4,7 @@ import time
 import random
 import logging
 
-logging.basicConfig(level='DEBUG')
+logging.basicConfig(level="DEBUG")
 Executor = deadpool.Deadpool
 manager = Manager()
 
@@ -40,4 +40,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

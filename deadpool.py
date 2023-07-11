@@ -333,8 +333,13 @@ class Deadpool(Executor):
             self.add_worker_to_pool()
             return
 
+        if not wp.ok:
+            self.add_worker_to_pool()
+            return
+
         if self.max_tasks_per_child is not None:
             if wp.tasks_ran_counter >= self.max_tasks_per_child:
+                logger.debug(f"Worker {wp.pid} hit max tasks per child.")
                 wp.shutdown(wait=False)
                 self.add_worker_to_pool()
                 return
@@ -344,10 +349,6 @@ class Deadpool(Executor):
                 wp.shutdown(wait=False)
                 self.add_worker_to_pool()
                 return
-
-        if not wp.ok:
-            self.add_worker_to_pool()
-            return
 
         self.workers.put(wp)
 
