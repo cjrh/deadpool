@@ -610,6 +610,9 @@ def raw_runner2(
         except EOFError:
             logger.debug("Received EOF, exiting.")
             break
+        except KeyboardInterrupt:
+            logger.debug("Received KeyboardInterrupt, exiting.")
+            break
 
         if job is None:
             logger.debug("Received None, exiting.")

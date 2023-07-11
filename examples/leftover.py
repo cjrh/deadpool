@@ -24,7 +24,7 @@ def main():
         max_tasks_per_child=2,
     )
     with exe:
-        for i in range(50):
+        for i in range(500):
             time.sleep(random.randrange(0, 10) / 10)
             w = random.randrange(0, 50) / 10
             exe.submit(worker, results, w, deadpool_timeout=4)
@@ -39,4 +39,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        pass
