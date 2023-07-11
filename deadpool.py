@@ -591,7 +591,7 @@ def raw_runner2(
         is reached. It kills this process with SIGKILL."""
         # First things first. Set a self-destruct timer for ourselves.
         # If we don't finish up in time, boom.
-        evt.set()
+        deactivate_parentless_self_destruct()
         conn_send_safe(TimeoutError(f"Process {pid} timed out, self-destructing."))
         # kill_proc_tree_in_process_daemon(pid, signal.SIGKILL)
         kill_proc_tree(pid, sig=signal.SIGKILL, allow_kill_self=True)
@@ -612,6 +612,9 @@ def raw_runner2(
             break
         except KeyboardInterrupt:
             logger.debug("Received KeyboardInterrupt, exiting.")
+            break
+        except BaseException:
+            logger.exception("Received unexpected exception, exiting.")
             break
 
         if job is None:
