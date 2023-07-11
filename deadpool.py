@@ -37,6 +37,22 @@ __all__ = [
 logger = logging.getLogger("deadpool")
 
 
+# Does not work. Hangs the process on exit.
+# There currently isn't an official way to clean up the
+# resource tracker process. It is an open issue on the
+# Python issue tracker.
+# @atexit.register
+# def stop_resource_tracker():
+#     from multiprocessing import resource_tracker
+#     tracker = resource_tracker._resource_tracker
+#     try:
+#         import time
+#         time.sleep(5)
+#         tracker._stop()
+#     except Exception:
+#         logger.info("Error stopping the multiprocessing resource tracker")
+
+
 @dataclass(order=True)
 class PrioritizedItem:
     priority: int
@@ -317,8 +333,13 @@ class Deadpool(Executor):
             self.add_worker_to_pool()
             return
 
+        if not wp.ok:
+            self.add_worker_to_pool()
+            return
+
         if self.max_tasks_per_child is not None:
             if wp.tasks_ran_counter >= self.max_tasks_per_child:
+                logger.debug(f"Worker {wp.pid} hit max tasks per child.")
                 wp.shutdown(wait=False)
                 self.add_worker_to_pool()
                 return
@@ -328,10 +349,6 @@ class Deadpool(Executor):
                 wp.shutdown(wait=False)
                 self.add_worker_to_pool()
                 return
-
-        if not wp.ok:
-            self.add_worker_to_pool()
-            return
 
         self.workers.put(wp)
 
@@ -370,7 +387,7 @@ class Deadpool(Executor):
                     logger.debug(f"p is no longer alive: {worker.process}")
                     try:
                         signame = signal.strsignal(-worker.process.exitcode)
-                    except ValueError:  # pragma: no cover
+                    except (ValueError, TypeError):  # pragma: no cover
                         signame = "Unknown"
 
                     if not fut.done():
@@ -531,12 +548,37 @@ def raw_runner2(
     finitargs: Optional[Tuple] = None,
     mem_clear_threshold_bytes: Optional[int] = None,
 ):
+    # This event is used to signal that the "parent"
+    # monitor thread should be deactivated.
+    evt = threading.Event()
+
+    def self_destruct_if_parent_disappers():
+        """Poll every 5 seconds to see whether the parent is still
+        alive.
+        """
+        while True:
+            if evt.wait(2.0):
+                return
+
+            if not psutil.pid_exists(parent_pid):
+                logger.warning(f"Parent {parent_pid} is gone, self-destructing.")
+                evt.set()
+                kill_proc_tree(pid, sig=signal.SIGKILL, allow_kill_self=True)
+                return
+
+    tparent = threading.Thread(target=self_destruct_if_parent_disappers, daemon=True)
+    tparent.start()
+
+    def deactivate_parentless_self_destruct():
+        evt.set()
+
     proc = psutil.Process()
     pid = proc.pid
     lock = threading.Lock()
 
     def conn_send_safe(obj):
         try:
+            # TODO: this may not be necessary
             with lock:
                 conn.send(obj)
         except BrokenPipeError:  # pragma: no cover
@@ -545,8 +587,11 @@ def raw_runner2(
             logger.exception("Unexpected pipe error")
 
     def timed_out():
+        """Action to fire when the timeout given to ``threading.Timer``
+        is reached. It kills this process with SIGKILL."""
         # First things first. Set a self-destruct timer for ourselves.
         # If we don't finish up in time, boom.
+        deactivate_parentless_self_destruct()
         conn_send_safe(TimeoutError(f"Process {pid} timed out, self-destructing."))
         # kill_proc_tree_in_process_daemon(pid, signal.SIGKILL)
         kill_proc_tree(pid, sig=signal.SIGKILL, allow_kill_self=True)
@@ -565,6 +610,12 @@ def raw_runner2(
         except EOFError:
             logger.debug("Received EOF, exiting.")
             break
+        except KeyboardInterrupt:
+            logger.debug("Received KeyboardInterrupt, exiting.")
+            break
+        except BaseException:
+            logger.exception("Received unexpected exception, exiting.")
+            break
 
         if job is None:
             logger.debug("Received None, exiting.")
@@ -579,31 +630,6 @@ def raw_runner2(
             deactivate_timer = lambda: t.cancel()  # noqa: E731
         else:
             deactivate_timer = lambda: None  # noqa: E731
-
-        evt = threading.Event()
-
-        def self_destruct_if_parent_disappers():
-            """Poll every 5 seconds to see whether the parent is still
-            alive.
-            """
-            while True:
-                if evt.wait(2.0):
-                    return
-
-                if not psutil.pid_exists(parent_pid):
-                    logger.warning(f"Parent {parent_pid} is gone, self-destructing.")
-                    evt.set()
-                    # kill_proc_tree_in_process_daemon(pid, signal.SIGKILL)
-                    kill_proc_tree(pid, sig=signal.SIGKILL, allow_kill_self=True)
-                    return
-
-        tparent = threading.Thread(
-            target=self_destruct_if_parent_disappers, daemon=True
-        )
-        tparent.start()
-
-        def deactivate_parentless_self_destruct():
-            evt.set()
 
         try:
             results = fn(*args, **kwargs)
@@ -628,7 +654,6 @@ def raw_runner2(
             conn_send_safe(results)
         finally:
             deactivate_timer()
-            deactivate_parentless_self_destruct()
 
             if mem_clear_threshold_bytes is not None:
                 mem = proc.memory_info().rss
@@ -641,6 +666,19 @@ def raw_runner2(
             finitializer(*finitargs)
         except BaseException:
             logger.exception("finitializer failed")
+
+    # We've reached the end of this function which means this
+    # process must exit. However, we started a couple threads
+    # in here and they don't magically exit. Additional
+    # synchronization controls are needed to tell the threads
+    # to exit, which we don't have. However, we do have a kill
+    # switch. Since this process worker will process no more
+    # work, and since we've already fun the finalizer, we may
+    # as well just nuke it. That will remove its memory space
+    # and all its threads too.
+    deactivate_parentless_self_destruct()
+    logger.debug(f"Nuking worker {pid=}")
+    kill_proc_tree(pid, sig=signal.SIGKILL, allow_kill_self=True)
 
 
 def kill_proc_tree_in_process_daemon(pid, sig):  # pragma: no cover
