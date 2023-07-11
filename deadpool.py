@@ -674,7 +674,7 @@ def raw_runner2(
     # as well just nuke it. That will remove its memory space
     # and all its threads too.
     deactivate_parentless_self_destruct()
-    logger.debug(f"Nuking worker {pid=}")
+    logger.debug(f"Deleting worker {pid=}")
     kill_proc_tree(pid, sig=signal.SIGKILL, allow_kill_self=True)
 
 
