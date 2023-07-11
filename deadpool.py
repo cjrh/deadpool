@@ -387,7 +387,7 @@ class Deadpool(Executor):
                     logger.debug(f"p is no longer alive: {worker.process}")
                     try:
                         signame = signal.strsignal(-worker.process.exitcode)
-                    except ValueError:  # pragma: no cover
+                    except (ValueError, TypeError):  # pragma: no cover
                         signame = "Unknown"
 
                     if not fut.done():
