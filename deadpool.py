@@ -574,13 +574,10 @@ def raw_runner2(
 
     proc = psutil.Process()
     pid = proc.pid
-    lock = threading.Lock()
 
     def conn_send_safe(obj):
         try:
-            # TODO: this may not be necessary
-            with lock:
-                conn.send(obj)
+            conn.send(obj)
         except BrokenPipeError:  # pragma: no cover
             logger.debug("Pipe not usable")
         except BaseException:
