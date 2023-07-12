@@ -16,6 +16,7 @@ import threading
 import traceback
 import typing
 import weakref
+import atexit
 from concurrent.futures import CancelledError, Executor, InvalidStateError, as_completed
 from dataclasses import dataclass, field
 from multiprocessing.connection import Connection
@@ -83,9 +84,6 @@ class WorkerProcess:
         mp_context="forkserver",
         malloc_trim_rss_memory_threshold_bytes=None,
     ):
-        if isinstance(mp_context, str):
-            mp_context = mp.get_context(mp_context)
-
         # For the process to send info OUT OF the process
         conn_receiver, conn_sender = mp.Pipe(duplex=False)
         # For sending work INTO the process
@@ -538,6 +536,43 @@ def cancel_all_futures_on_queue(q: Queue):
             break
 
 
+# Taken from
+# https://psutil.readthedocs.io/en/latest/index.html?highlight=children#kill-process-tree
+def kill_proc_tree(
+    pid,
+    sig=signal.SIGTERM,
+    include_parent=True,
+    timeout=None,
+    on_terminate=None,
+    allow_kill_self=False,
+):  # pragma: no cover
+    """Kill a process tree (including grandchildren) with signal
+    "sig" and return a (gone, still_alive) tuple.
+    "on_terminate", if specified, is a callback function which is
+    called as soon as a child terminates.
+    """
+    if not allow_kill_self and pid == os.getpid():
+        raise ValueError("Won't kill myself")
+
+    try:
+        parent = psutil.Process(pid)
+    except psutil.NoSuchProcess:
+        return
+
+    children = parent.children(recursive=True)
+    if include_parent:
+        children.append(parent)
+
+    for p in children:
+        try:
+            p.send_signal(sig)
+        except psutil.NoSuchProcess:
+            pass
+
+    gone, alive = psutil.wait_procs(children, timeout=timeout, callback=on_terminate)
+    return (gone, alive)
+
+
 def raw_runner2(
     conn: Connection,
     conn_receiver: Connection,
@@ -547,6 +582,7 @@ def raw_runner2(
     finitializer: Optional[Callable] = None,
     finitargs: Optional[Tuple] = None,
     mem_clear_threshold_bytes: Optional[int] = None,
+    kill_proc_tree=kill_proc_tree,
 ):
     # This event is used to signal that the "parent"
     # monitor thread should be deactivated.
@@ -563,8 +599,11 @@ def raw_runner2(
             if not psutil.pid_exists(parent_pid):
                 logger.warning(f"Parent {parent_pid} is gone, self-destructing.")
                 evt.set()
-                kill_proc_tree(pid, sig=signal.SIGKILL, allow_kill_self=True)
-                return
+                atexit._run_exitfuncs()
+                kill_proc_tree(
+                    pid, sig=signal.SIGKILL, allow_kill_self=True
+                )  # pragma: no cover
+                return  # pragma: no cover
 
     tparent = threading.Thread(target=self_destruct_if_parent_disappers, daemon=True)
     tparent.start()
@@ -591,7 +630,10 @@ def raw_runner2(
         deactivate_parentless_self_destruct()
         conn_send_safe(TimeoutError(f"Process {pid} timed out, self-destructing."))
         # kill_proc_tree_in_process_daemon(pid, signal.SIGKILL)
-        kill_proc_tree(pid, sig=signal.SIGKILL, allow_kill_self=True)
+        atexit._run_exitfuncs()
+        kill_proc_tree(
+            pid, sig=signal.SIGKILL, allow_kill_self=True
+        )  # pragma: no cover
 
     if initializer:
         initargs = initargs or ()
@@ -603,14 +645,16 @@ def raw_runner2(
     while True:
         # Wait for some work.
         try:
+            logger.debug("Waiting for work...")
             job = conn_receiver.recv()
+            logger.debug("Got a job")
         except EOFError:
             logger.debug("Received EOF, exiting.")
             break
-        except KeyboardInterrupt:
+        except KeyboardInterrupt:  # pragma: no cover
             logger.debug("Received KeyboardInterrupt, exiting.")
             break
-        except BaseException:
+        except BaseException:  # pragma: no cover
             logger.exception("Received unexpected exception, exiting.")
             break
 
@@ -675,48 +719,12 @@ def raw_runner2(
     # and all its threads too.
     deactivate_parentless_self_destruct()
     logger.debug(f"Deleting worker {pid=}")
-    kill_proc_tree(pid, sig=signal.SIGKILL, allow_kill_self=True)
+    atexit._run_exitfuncs()
+    kill_proc_tree(pid, sig=signal.SIGKILL, allow_kill_self=True)  # pragma: no cover
 
 
 def kill_proc_tree_in_process_daemon(pid, sig):  # pragma: no cover
     mp.Process(target=kill_proc_tree, args=(pid, sig), daemon=True).start()
-
-
-# Taken from
-# https://psutil.readthedocs.io/en/latest/index.html?highlight=children#kill-process-tree
-def kill_proc_tree(
-    pid,
-    sig=signal.SIGTERM,
-    include_parent=True,
-    timeout=None,
-    on_terminate=None,
-    allow_kill_self=False,
-):  # pragma: no cover
-    """Kill a process tree (including grandchildren) with signal
-    "sig" and return a (gone, still_alive) tuple.
-    "on_terminate", if specified, is a callback function which is
-    called as soon as a child terminates.
-    """
-    if not allow_kill_self and pid == os.getpid():
-        raise ValueError("Won't kill myself")
-
-    try:
-        parent = psutil.Process(pid)
-    except psutil.NoSuchProcess:
-        return
-
-    children = parent.children(recursive=True)
-    if include_parent:
-        children.append(parent)
-
-    for p in children:
-        try:
-            p.send_signal(sig)
-        except psutil.NoSuchProcess:
-            pass
-
-    gone, alive = psutil.wait_procs(children, timeout=timeout, callback=on_terminate)
-    return (gone, alive)
 
 
 def trim_memory() -> None:

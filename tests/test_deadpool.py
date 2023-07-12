@@ -25,59 +25,6 @@ async def test_func():
     return 42
 
 
-class TestDeadPool(unittest.TestCase):
-    async def test_acquire(self):
-        async with deadpool.DeadPool(size=2) as pool:
-            fut1 = pool.acquire()
-            fut2 = pool.acquire()
-            await asyncio.sleep(0.1)  # ensure both workers are running
-            self.assertEqual(pool.num_workers(), 2)
-            pool.release(await fut1)
-            pool.release(await fut2)
-        self.assertEqual(pool.num_workers(), 0)
-
-    async def test_concurrent_tasks(self):
-        async with deadpool.DeadPool(size=2) as pool:
-            results = await asyncio.gather(
-                pool.run_in_executor(test_func), pool.run_in_executor(test_func)
-            )
-            self.assertEqual(len(results), 2)
-            self.assertIn(42, results)
-
-    async def test_oversubscription(self):
-        async with deadpool.DeadPool(size=2) as pool:
-            fut1 = pool.acquire()
-            fut2 = pool.acquire()
-            fut3 = pool.acquire()
-            await asyncio.sleep(0.1)  # ensure all workers are running
-            self.assertEqual(pool.num_workers(), 2)
-            pool.release(await fut1)
-            pool.release(await fut2)
-            pool.release(await fut3)
-        self.assertEqual(pool.num_workers(), 0)
-
-    async def test_closed_pool(self):
-        pool = deadpool.DeadPool(size=2)
-        await pool.acquire()
-        await pool.acquire()
-        pool.close()
-        with self.assertRaises(RuntimeError):
-            await pool.acquire()
-
-    async def test_worker_exceptions(self):
-        async def failing_func():
-            await asyncio.sleep(0.1)
-            raise ValueError("failed")
-
-        async with deadpool.DeadPool(size=2) as pool:
-            results = await asyncio.gather(
-                pool.run_in_executor(failing_func), pool.run_in_executor(test_func)
-            )
-            self.assertEqual(len(results), 2)
-            self.assertIn(42, results)
-            self.assertIsInstance(results[0], ValueError)
-
-
 def f():
     return 123
 
@@ -111,10 +58,10 @@ def test_simple(malloc_threshold):
     with deadpool.Deadpool(
         malloc_trim_rss_memory_threshold_bytes=malloc_threshold
     ) as exe:
-        fut = exe.submit(t, 0.5)
+        fut = exe.submit(t, 0.05)
         result = fut.result()
 
-    assert result == 0.5
+    assert result == 0.05
 
     # Outside the context manager, no new tasks
     # can be submitted.
@@ -128,6 +75,35 @@ def test_simple_batch(logging_initializer):
         results = [fut.result() for fut in futs]
 
     assert results == [0.1] * 2
+
+
+@pytest.mark.parametrize("ctx", ["spawn", "forkserver", "fork"])
+def test_ctx(logging_initializer, ctx):
+    with deadpool.Deadpool(mp_context=ctx, initializer=logging_initializer) as exe:
+        fut = exe.submit(t, 0.05)
+        result = fut.result()
+
+    assert result == 0.05
+
+
+def tsk(*args):
+    return os.getpid()
+
+
+@pytest.mark.parametrize(
+    "max_tasks_per_child,pid_count",
+    [
+        (100, 1),
+        (1, 10),
+    ],
+)
+def test_max_tasks_per_child(logging_initializer, max_tasks_per_child, pid_count):
+    kwargs = dict(max_workers=1, max_tasks_per_child=max_tasks_per_child)
+    with deadpool.Deadpool(initializer=logging_initializer, **kwargs) as exe:
+        futs = [exe.submit(tsk, 0) for _ in range(10)]
+        pids = set(fut.result() for fut in deadpool.as_completed(futs))
+
+    assert len(pids) == pid_count
 
 
 @pytest.mark.parametrize("wait", [True, False])
