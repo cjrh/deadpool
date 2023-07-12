@@ -26,7 +26,7 @@ def test(session):
 def testcov(session):
     session.install(".")
     session.install("pytest", "pytest-html", "coverage")
-    EXTRA_PYTEST= ' '.join(session.posargs)
+    EXTRA_PYTEST = " ".join(session.posargs)
     session.run(
         *shlex.split(
             f"coverage run --concurrency=multiprocessing,thread "
