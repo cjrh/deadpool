@@ -113,14 +113,14 @@ Similarities
   since Python 3.2).
 - The "initializer" callback in ``Deadpool`` works the same.
 - ``Deadpool`` defaults to the `forkserver <https://docs.python.org/3.11/library/multiprocessing.html#contexts-and-start-methods>`_ multiprocessing
-context, unlike the stdlib pool which defaults to ``fork`` on
-Linux. It's just a setting though, you can change it in the same way as
-with the stdlib pool. Like the stdlib, I strongly advise you to avoid
-using ``fork`` because propagation threads and locks via fork is
-going to ruin your day eventually. While this is a difference to the
-default behaviour of the stdlib pool, it's not a difference in
-behaviour to the stdlib pool when you use the ``forkserver`` context
-which is the recommended context for multiprocessing.
+  context, unlike the stdlib pool which defaults to ``fork`` on
+  Linux. It's just a setting though, you can change it in the same way as
+  with the stdlib pool. Like the stdlib, I strongly advise you to avoid
+  using ``fork`` because propagation threads and locks via fork is
+  going to ruin your day eventually. While this is a difference to the
+  default behaviour of the stdlib pool, it's not a difference in
+  behaviour to the stdlib pool when you use the ``forkserver`` context
+  which is the recommended context for multiprocessing.
 
 Differences in existing behaviour
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -164,6 +164,9 @@ stdlib pool:
   will not run at all, such as when the subprocess is killed by the OS
   due to an out-of-memory (OOM) condition. So don't design your application
   such that the finalizer is required to run for correct operation.
+- Even though ``Deadpool`` typically uses a hard kill to remove
+  subprocesses, it does still run any handlers registered with
+  ``atexit``.
 - ``Deadpool`` tasks can have timeouts. When a task hits the timeout,
   the underlying subprocess in the pool is killed with ``SIGKILL``.
   The entire process tree of that subprocess is killed. Your application
