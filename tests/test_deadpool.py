@@ -77,6 +77,32 @@ def test_simple_batch(logging_initializer):
     assert results == [0.1] * 2
 
 
+@pytest.mark.parametrize("ctx", ["spawn", "forkserver", "fork"])
+def test_ctx(logging_initializer, ctx):
+    with deadpool.Deadpool(mp_context=ctx, initializer=logging_initializer) as exe:
+        fut = exe.submit(t, 0.05)
+        result = fut.result()
+
+    assert result == 0.05
+
+
+def tsk(*args):
+    return os.getpid()
+
+
+@pytest.mark.parametrize("max_tasks_per_child,pid_count", [
+    (100, 1),
+    (1, 10),
+])
+def test_max_tasks_per_child(logging_initializer, max_tasks_per_child, pid_count):
+    kwargs = dict(max_workers=1, max_tasks_per_child=max_tasks_per_child)
+    with deadpool.Deadpool(initializer=logging_initializer, **kwargs) as exe:
+        futs = [exe.submit(tsk, 0) for _ in range(10)]
+        pids = set(fut.result() for fut in deadpool.as_completed(futs))
+
+    assert len(pids) == pid_count
+
+
 @pytest.mark.parametrize("wait", [True, False])
 @pytest.mark.parametrize("cancel_futures", [True, False])
 def test_shutdown(logging_initializer, wait, cancel_futures):
