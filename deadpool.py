@@ -212,6 +212,7 @@ class Deadpool(Executor):
         shutdown_wait: Optional[bool] = None,
         shutdown_cancel_futures: Optional[bool] = None,
         daemon=True,
+        sync=False,
         malloc_trim_rss_memory_threshold_bytes: Optional[int] = None,
     ) -> None:
         super().__init__()
@@ -243,6 +244,7 @@ class Deadpool(Executor):
         self.malloc_trim_rss_memory_threshold_bytes = (
             malloc_trim_rss_memory_threshold_bytes
         )
+        self.sync = sync
 
         # TODO: overcommit
         self.workers = SimpleQueue()
@@ -439,12 +441,20 @@ class Deadpool(Executor):
             raise PoolClosed("The pool is closed. No more tasks can be submitted.")
 
         fut = Future()
-        self.submitted_jobs.put(
-            PrioritizedItem(
-                priority=deadpool_priority,
-                item=(__fn, args, kwargs, deadpool_timeout, fut),
+        if self.sync:
+            try:
+                result = __fn(*args, **kwargs)
+            except BaseException as e:
+                fut.set_exception(e)
+            else:
+                fut.set_result(result)
+        else:
+            self.submitted_jobs.put(
+                PrioritizedItem(
+                    priority=deadpool_priority,
+                    item=(__fn, args, kwargs, deadpool_timeout, fut),
+                )
             )
-        )
         return fut
 
     def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
