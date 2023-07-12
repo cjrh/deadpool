@@ -104,23 +104,80 @@ tasks in subprocesses, and implements the standard ``Executor`` abstract
 interface. We can draw a few comparisons to the stdlib pool to guide
 your decision process about whether this makes sense for your use-case:
 
-- ``Deadpool`` precreates all subprocesses up to the pool size.
+Similarities
+~~~~~~~~~~~~
+
 - ``Deadpool`` also supports the
   ``max_tasks_per_child`` parameter (a new feature in
   Python 3.11, although it was available in `multiprocessing.Pool`_
   since Python 3.2).
+- The "initializer" callback in ``Deadpool`` works the same.
+- ``Deadpool`` defaults to the `forkserver <https://docs.python.org/3.11/library/multiprocessing.html#contexts-and-start-methods>`_ multiprocessing
+context, unlike the stdlib pool which defaults to ``fork`` on
+Linux. It's just a setting though, you can change it in the same way as
+with the stdlib pool. Like the stdlib, I strongly advise you to avoid
+using ``fork`` because propagation threads and locks via fork is
+going to ruin your day eventually. While this is a difference to the
+default behaviour of the stdlib pool, it's not a difference in
+behaviour to the stdlib pool when you use the ``forkserver`` context
+which is the recommended context for multiprocessing.
+
+Differences in existing behaviour
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``Deadpool`` differs from the stdlib pool in the following ways:
+
+- If a ``Deadpool`` subprocess in the pool is killed by some
+  external actor, for example, the OS runs out of memory and the
+  `OOM killer`_ kills a pool subprocess that is using too much memory,
+  ``Deadpool`` does not care and further operation is unaffected.
+  ``Deadpool`` will not, and indeed cannot raise
+  `BrokenProcessPool <https://docs.python.org/3/library/concurrent.futures.html?highlight=broken%20process%20pool#concurrent.futures.process.BrokenProcessPool>`_ or
+  `BrokenExecutor <https://docs.python.org/3/library/concurrent.futures.html?highlight=broken%20process%20pool#concurrent.futures.BrokenExecutor>`_.
+- ``Deadpool`` precreates all subprocesses up to the pool size on
+  creation.
 - ``Deadpool`` tasks can have priorities. When the executor chooses
   the next pending task to schedule to a subprocess, it chooses the
   pending task with the highest priority. This gives you a way of
   prioritizing certain kinds of tasks. For example, you might give
   UI-sensitive tasks a higher priority to deliver a more snappy
-  user experience to your users.
-- ``Deadpool`` defaults to the `forkserver <https://docs.python.org/3.11/library/multiprocessing.html#contexts-and-start-methods>`_ multiprocessing
-  context, unlike the stdlib pool which defaults to ``fork`` on
-  Linux. It's just a setting though, you can change it in the same way as
-  with the stdlib pool. Like the stdlib, I strongly advise you to avoid
-  using ``fork`` because propagation threads and locks via fork is
-  going to ruin your day eventually.
+  user experience to your users. The priority can be specified in
+  the ``submit`` call.
+- The shutdown parameters ``wait`` and ``cancel_futures`` can behave
+  differently to how they work in the `ProcessPoolExecutor`_. This is
+  discussed in more detail later in this document.
+- ``Deadpool`` currently only works on Linux. There isn't any specific
+  reason it can't work on other platforms. The malloc trim feature also
+  requires a glibc system, so probably won't work on Alpine.
+
+New features in Deadpool
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+``Deadpool`` has the following features that are not present in the
+stdlib pool:
+
+- With ``Deadpool`` you can provider a "finalizer" callback that will
+  fire before a subprocess is shut down or killed. The finalizer callback
+  might be executed in a different thread than the main thread of the
+  subprocess, so don't rely on the callback running in the main
+  subprocess thread. There are certain circumstances where the finalizer
+  will not run at all, such as when the subprocess is killed by the OS
+  due to an out-of-memory (OOM) condition. So don't design your application
+  such that the finalizer is required to run for correct operation.
+- ``Deadpool`` tasks can have timeouts. When a task hits the timeout,
+  the underlying subprocess in the pool is killed with ``SIGKILL``.
+  The entire process tree of that subprocess is killed. Your application
+  logic needs to handle this. The ``finalizer`` will not run.
+- ``Deadpool`` also allows a ``finalizer``, with corresponding
+  ``finalargs``, that will be called after a task is executed on
+  a subprocess, but before the subprocess terminates. It is
+  analogous to the ``initializer`` and ``initargs`` parameters.
+  Just like the ``initializer`` callable, the ``finalizer``
+  callable is executed inside the subprocess. It is not guaranteed that
+  the finalizer will always run. If a process is killed, e.g. due to a
+  timeout or any other reason, the finalizer will not run. The finalizer
+  could be used for things like flushing pending monitoring messages,
+  such as traces and so on.
 - ``Deadpool`` can ask the system allocator (Linux only) to return
   unused memory back to the OS based on exceeding a max threshold RSS.
   For long-running pools and modern
@@ -135,36 +192,6 @@ your decision process about whether this makes sense for your use-case:
   know or suspect there's a real memory leak somewhere in your code
   (or a 3rd-party package!), and the easiest way to deal with that
   right now is just to periodically remove a process.
-- ``Deadpool`` tasks can have timeouts. When a task hits the timeout,
-  the underlying subprocess in the pool is killed with ``SIGKILL``.
-  The entire process tree of that subprocess is killed. Your application
-  logic needs to handle this. The ``finalizer`` will not run.
-- ``Deadpool`` tasks can have priorities. The priority is set in the
-  ``submit()`` call. See the examples later in this document for further
-  discussion on priorities.
-- The shutdown parameters ``wait`` and ``cancel_futures`` can behave
-  differently to how they work in the _ProcessPoolExecutor. This is
-  discussed in more detail later in this document.
-- If a ``Deadpool`` subprocess in the pool is killed by some
-  external actor, for example, the OS runs out of memory and the
-  `OOM killer`_ kills a pool subprocess that is using too much memory,
-  ``Deadpool`` does not care and further operation is unaffected.
-  ``Deadpool`` will not, and indeed cannot raise
-  `BrokenProcessPool <https://docs.python.org/3/library/concurrent.futures.html?highlight=broken%20process%20pool#concurrent.futures.process.BrokenProcessPool>`_ or
-  `BrokenExecutor <https://docs.python.org/3/library/concurrent.futures.html?highlight=broken%20process%20pool#concurrent.futures.BrokenExecutor>`_.
-- ``Deadpool`` also allows a ``finalizer``, with corresponding
-  ``finalargs``, that will be called after a task is executed on
-  a subprocess, but before the subprocess terminates. It is
-  analogous to the ``initializer`` and ``initargs`` parameters.
-  Just like the ``initializer`` callable, the ``finalizer``
-  callable is executed inside the subprocess. It is not guaranteed that
-  the finalizer will always run. If a process is killed, e.g. due to a
-  timeout or any other reason, the finalizer will not run. The finalizer
-  could be used for things like flushing pending monitoring messages,
-  such as traces and so on.
-- ``Deadpool`` currently only works on Linux. There isn't any specific
-  reason it can't work on other platforms. The malloc trim feature also
-  requires a glibc system, so probably won't work on Alpine.
 
 Show me some code
 -----------------
@@ -216,6 +243,10 @@ and other similar scenarios.
         with pytest.raises(deadpool.TimeoutError)
             fut.result()
 
+The parameter ``deadpool_timeout`` is special and consumed by ``Deadpool``
+in the call. You can't use a parameter with this name in your function 
+kwargs.
+
 Handling OOM killed situations
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
@@ -236,9 +267,9 @@ Handling OOM killed situations
             print("Oh no someone killed my task!")
 
 
-As long as the OOM killer terminates the subprocess (and not the main process),
-which is likely because it'll be your subprocess that is using too much
-memory, this will not hurt the pool, and it will be able to receive and
+As long as the OOM killer terminates merely a subprocess (and not the main
+process), which is likely because it'll be your subprocess that is using too
+much memory, this will not hurt the pool, and it will be able to receive and
 process more tasks. Note that this event will show up as a ``ProcessError``
 exception when accessing the future, so you have a way of at least tracking
 these events.
