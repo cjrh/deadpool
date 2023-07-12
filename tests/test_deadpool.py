@@ -90,10 +90,13 @@ def tsk(*args):
     return os.getpid()
 
 
-@pytest.mark.parametrize("max_tasks_per_child,pid_count", [
-    (100, 1),
-    (1, 10),
-])
+@pytest.mark.parametrize(
+    "max_tasks_per_child,pid_count",
+    [
+        (100, 1),
+        (1, 10),
+    ],
+)
 def test_max_tasks_per_child(logging_initializer, max_tasks_per_child, pid_count):
     kwargs = dict(max_workers=1, max_tasks_per_child=max_tasks_per_child)
     with deadpool.Deadpool(initializer=logging_initializer, **kwargs) as exe:

@@ -600,7 +600,9 @@ def raw_runner2(
                 logger.warning(f"Parent {parent_pid} is gone, self-destructing.")
                 evt.set()
                 atexit._run_exitfuncs()
-                kill_proc_tree(pid, sig=signal.SIGKILL, allow_kill_self=True)  # pragma: no cover
+                kill_proc_tree(
+                    pid, sig=signal.SIGKILL, allow_kill_self=True
+                )  # pragma: no cover
                 return  # pragma: no cover
 
     tparent = threading.Thread(target=self_destruct_if_parent_disappers, daemon=True)
@@ -629,7 +631,9 @@ def raw_runner2(
         conn_send_safe(TimeoutError(f"Process {pid} timed out, self-destructing."))
         # kill_proc_tree_in_process_daemon(pid, signal.SIGKILL)
         atexit._run_exitfuncs()
-        kill_proc_tree(pid, sig=signal.SIGKILL, allow_kill_self=True)  # pragma: no cover
+        kill_proc_tree(
+            pid, sig=signal.SIGKILL, allow_kill_self=True
+        )  # pragma: no cover
 
     if initializer:
         initargs = initargs or ()
