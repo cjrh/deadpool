@@ -25,59 +25,6 @@ async def test_func():
     return 42
 
 
-class TestDeadPool(unittest.TestCase):
-    async def test_acquire(self):
-        async with deadpool.DeadPool(size=2) as pool:
-            fut1 = pool.acquire()
-            fut2 = pool.acquire()
-            await asyncio.sleep(0.1)  # ensure both workers are running
-            self.assertEqual(pool.num_workers(), 2)
-            pool.release(await fut1)
-            pool.release(await fut2)
-        self.assertEqual(pool.num_workers(), 0)
-
-    async def test_concurrent_tasks(self):
-        async with deadpool.DeadPool(size=2) as pool:
-            results = await asyncio.gather(
-                pool.run_in_executor(test_func), pool.run_in_executor(test_func)
-            )
-            self.assertEqual(len(results), 2)
-            self.assertIn(42, results)
-
-    async def test_oversubscription(self):
-        async with deadpool.DeadPool(size=2) as pool:
-            fut1 = pool.acquire()
-            fut2 = pool.acquire()
-            fut3 = pool.acquire()
-            await asyncio.sleep(0.1)  # ensure all workers are running
-            self.assertEqual(pool.num_workers(), 2)
-            pool.release(await fut1)
-            pool.release(await fut2)
-            pool.release(await fut3)
-        self.assertEqual(pool.num_workers(), 0)
-
-    async def test_closed_pool(self):
-        pool = deadpool.DeadPool(size=2)
-        await pool.acquire()
-        await pool.acquire()
-        pool.close()
-        with self.assertRaises(RuntimeError):
-            await pool.acquire()
-
-    async def test_worker_exceptions(self):
-        async def failing_func():
-            await asyncio.sleep(0.1)
-            raise ValueError("failed")
-
-        async with deadpool.DeadPool(size=2) as pool:
-            results = await asyncio.gather(
-                pool.run_in_executor(failing_func), pool.run_in_executor(test_func)
-            )
-            self.assertEqual(len(results), 2)
-            self.assertIn(42, results)
-            self.assertIsInstance(results[0], ValueError)
-
-
 def f():
     return 123
 
