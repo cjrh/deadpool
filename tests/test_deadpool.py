@@ -58,10 +58,10 @@ def test_simple(malloc_threshold):
     with deadpool.Deadpool(
         malloc_trim_rss_memory_threshold_bytes=malloc_threshold
     ) as exe:
-        fut = exe.submit(t, 0.5)
+        fut = exe.submit(t, 0.05)
         result = fut.result()
 
-    assert result == 0.5
+    assert result == 0.05
 
     # Outside the context manager, no new tasks
     # can be submitted.
