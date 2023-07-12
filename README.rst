@@ -105,7 +105,7 @@ interface. We can draw a few comparisons to the stdlib pool to guide
 your decision process about whether this makes sense for your use-case:
 
 Similarities
-~~~~~~~~~~~~
+^^^^^^^^^^^^
 
 - ``Deadpool`` also supports the
   ``max_tasks_per_child`` parameter (a new feature in
@@ -123,7 +123,7 @@ behaviour to the stdlib pool when you use the ``forkserver`` context
 which is the recommended context for multiprocessing.
 
 Differences in existing behaviour
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 ``Deadpool`` differs from the stdlib pool in the following ways:
 
@@ -151,7 +151,7 @@ Differences in existing behaviour
   requires a glibc system, so probably won't work on Alpine.
 
 New features in Deadpool
-~~~~~~~~~~~~~~~~~~~~~~~~
+^^^^^^^^^^^^^^^^^^^^^^^^
 
 ``Deadpool`` has the following features that are not present in the
 stdlib pool:
