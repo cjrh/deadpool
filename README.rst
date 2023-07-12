@@ -552,6 +552,21 @@ To run the tests:
 
    $ nox -s tests
 
+To run tests for a particular version, and say with coverage:
+
+.. code-block:: shell
+
+   $ nox -s testcov-3.11
+
+To pass additional arguments to pytest, use the ``--`` separator:
+
+.. code-block:: shell
+
+   $ nox -s testcov-3.11 -- -k test_deadpool -s <etc>
+
+This is nonstandard above, but I customized the ``noxfile.py`` to
+allow this.
+
 style
 ^^^^^
 
@@ -564,7 +579,7 @@ To apply style fixes, and check for any remaining lints,
 docs
 ^^^^
 
-The only docs currently are this README, which uses RST. Github 
+The only docs currently are this README, which uses RST. Github
 uses `docutils <https://docutils.sourceforge.io/docs/ref/rst/directives.html>`_
 to render RST.
 

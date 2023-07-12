@@ -52,3 +52,6 @@ extend-exclude = '''
     ^/venv.*
 )
 '''
+
+[tool.pyright]
+useLibraryCodeForTypes = true
