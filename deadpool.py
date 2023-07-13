@@ -367,7 +367,15 @@ class Deadpool(Executor):
     def run_task(self, fn, args, kwargs, timeout, fut: Future):
         try:
             worker: WorkerProcess = self.get_process()
-            worker.submit_job((fn, args, kwargs, timeout))
+            try:
+                worker.submit_job((fn, args, kwargs, timeout))
+            except (pickle.PicklingError, AttributeError) as e:
+                # If the user passed in a function or params that can't
+                # be pickled, use the future to communicate the error.
+                fut.set_exception(e)
+                self.done_with_process(worker)
+                return
+
             fut.pid = worker.pid
             self.running_futs.add(fut)
 
@@ -436,7 +444,8 @@ class Deadpool(Executor):
 
     def submit(
         self,
-        __fn: Callable,
+        fn: Callable,
+        /,
         *args,
         deadpool_timeout=None,
         deadpool_priority=0,
@@ -454,7 +463,7 @@ class Deadpool(Executor):
         self.submitted_jobs.put(
             PrioritizedItem(
                 priority=deadpool_priority,
-                item=(__fn, args, kwargs, deadpool_timeout, fut),
+                item=(fn, args, kwargs, deadpool_timeout, fut),
             )
         )
         return fut

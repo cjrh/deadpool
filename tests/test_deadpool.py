@@ -407,6 +407,43 @@ def test_trim_memory():
     deadpool.trim_memory()
 
 
+def test_can_pickle_nested_function():
+    # Verify that deadpool raises a ValueError
+    # if the function can't be pickled.
+    def f():
+        pass
+
+    with deadpool.Deadpool() as exe:
+        fut = exe.submit(f)
+
+        with pytest.raises(AttributeError, match="Can't pickle local object"):
+            fut.result()
+
+
+def test_can_pickle_nested_function_cf():
+    """Check that stdlib works the same way."""
+    from concurrent.futures import ProcessPoolExecutor
+
+    def f():
+        pass
+
+    with ProcessPoolExecutor() as exe:
+        fut = exe.submit(f)
+
+        with pytest.raises(AttributeError, match="Can't pickle local object"):
+            fut.result()
+
+
+def test_can_pickle_lambda_function():
+    # Verify that deadpool raises a ValueError
+    # if the function can't be pickled.
+    with deadpool.Deadpool() as exe:
+        fut = exe.submit(lambda: 123)
+
+        with pytest.raises(AttributeError, match="Can't pickle local object"):
+            fut.result()
+
+
 @contextmanager
 def elapsed():
     t0 = time.perf_counter()
