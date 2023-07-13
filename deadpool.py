@@ -357,7 +357,10 @@ class Deadpool(Executor):
                 return
 
         if self.max_worker_memory_bytes is not None:
-            if wp.get_rss_bytes() >= self.max_worker_memory_bytes:
+            mem = wp.get_rss_bytes()
+            logger.debug(f"Worker {wp.pid} has {mem} bytes of RSS memory.")
+            if mem >= self.max_worker_memory_bytes:
+                logger.debug(f"Worker {wp.pid} hit max memory threshold.")
                 wp.shutdown(wait=False)
                 self.add_worker_to_pool()
                 return
@@ -367,7 +370,15 @@ class Deadpool(Executor):
     def run_task(self, fn, args, kwargs, timeout, fut: Future):
         try:
             worker: WorkerProcess = self.get_process()
-            worker.submit_job((fn, args, kwargs, timeout))
+            try:
+                worker.submit_job((fn, args, kwargs, timeout))
+            except (pickle.PicklingError, AttributeError) as e:
+                # If the user passed in a function or params that can't
+                # be pickled, use the future to communicate the error.
+                fut.set_exception(e)
+                self.done_with_process(worker)
+                return
+
             fut.pid = worker.pid
             self.running_futs.add(fut)
 
@@ -436,7 +447,8 @@ class Deadpool(Executor):
 
     def submit(
         self,
-        __fn: Callable,
+        fn: Callable,
+        /,
         *args,
         deadpool_timeout=None,
         deadpool_priority=0,
@@ -454,7 +466,7 @@ class Deadpool(Executor):
         self.submitted_jobs.put(
             PrioritizedItem(
                 priority=deadpool_priority,
-                item=(__fn, args, kwargs, deadpool_timeout, fut),
+                item=(fn, args, kwargs, deadpool_timeout, fut),
             )
         )
         return fut
@@ -559,7 +571,7 @@ def kill_proc_tree(
     timeout=None,
     on_terminate=None,
     allow_kill_self=False,
-):  # pragma: no cover
+):
     """Kill a process tree (including grandchildren) with signal
     "sig" and return a (gone, still_alive) tuple.
     "on_terminate", if specified, is a callback function which is

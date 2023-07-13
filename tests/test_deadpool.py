@@ -5,7 +5,6 @@ import queue
 import signal
 import sys
 import time
-import unittest
 from concurrent.futures import CancelledError, as_completed
 from contextlib import contextmanager
 from functools import partial
@@ -405,6 +404,86 @@ def test_cancel_and_kill():
 def test_trim_memory():
     """Just testing it doesn't fail."""
     deadpool.trim_memory()
+
+
+leak_test_accumulator = bytearray()
+
+
+def leak_bytes(n):
+    leak_test_accumulator.extend(bytearray(n))
+
+
+def leaker(n):
+    leak_bytes(n)
+    return os.getpid()
+
+
+def test_max_memory(logging_initializer):
+    # Verify that the memory threshold feature in deadpool
+    # works as expected. This test will run 20 functions, 10
+    # of which will consume 1MB of memory. The other 10 will
+    # consume 0.1MB of memory. The memory threshold is set to
+    # 1.5MB, so the first 10 functions should cause their workers
+    # to be replaced by new workers, while the other 10 functions
+    # should be able to run without requiring their workers to be
+    # replaced. So we'll count the total number of subprocess PID
+    # values seen by a task, and verify the result.
+
+    leak_test_accumulator.clear()
+    with deadpool.Deadpool(
+        initializer=logging_initializer,
+        max_workers=1,
+        max_worker_memory_bytes=100_000_000,
+    ) as exe:
+        futs = []
+        for _ in range(10):
+            futs.append(exe.submit(leaker, 150_000_000))
+            futs.append(exe.submit(leaker, 100_000))
+
+        pids = set(f.result() for f in deadpool.as_completed(futs))
+
+    # We should see 11 unique PIDs, because the first 10 functions
+    # should have caused their workers to be replaced, while their
+    # replacements should have been able to run the remaining 10
+    # functions without being replaced.
+    assert len(pids) == 11
+
+
+def test_can_pickle_nested_function():
+    # Verify that deadpool raises a ValueError
+    # if the function can't be pickled.
+    def f():
+        pass
+
+    with deadpool.Deadpool() as exe:
+        fut = exe.submit(f)
+
+        with pytest.raises(AttributeError, match="Can't pickle local object"):
+            fut.result()
+
+
+def test_can_pickle_nested_function_cf():
+    """Check that stdlib works the same way."""
+    from concurrent.futures import ProcessPoolExecutor
+
+    def f():
+        pass
+
+    with ProcessPoolExecutor() as exe:
+        fut = exe.submit(f)
+
+        with pytest.raises(AttributeError, match="Can't pickle local object"):
+            fut.result()
+
+
+def test_can_pickle_lambda_function():
+    # Verify that deadpool raises a ValueError
+    # if the function can't be pickled.
+    with deadpool.Deadpool() as exe:
+        fut = exe.submit(lambda: 123)
+
+        with pytest.raises(AttributeError, match="Can't pickle local object"):
+            fut.result()
 
 
 @contextmanager
