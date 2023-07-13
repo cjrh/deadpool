@@ -32,6 +32,12 @@
     :alt: OpenSSF Scorecard
     :target: https://api.securityscorecards.dev/projects/github.com/cjrh/deadpool
 
+.. sectnum::
+
+.. contents::
+   :local:
+   :depth: 2
+   :backlinks: entry
 
 Deadpool
 --------
@@ -48,13 +54,6 @@ This document assumes that you are familiar with the stdlib
 to understand that ``Deadpool`` makes very specific tradeoffs that
 can result in quite different behaviour to the stdlib
 implementation.
-
-.. sectnum::
-
-.. contents::
-   :local:
-   :depth: 2
-   :backlinks: entry
 
 Installation
 ------------
