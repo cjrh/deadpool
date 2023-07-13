@@ -2,6 +2,20 @@
 Deadpool
 ========
 
+Important design considerations:
+
+Backpressure
+------------
+
+To allow backpressure when submitting work to the pool, we make
+the ``submit`` method block when the number of pending tasks is
+greater than the ``max_workers`` parameter. This has consequences,
+basically it means the main thread is blocked and nothing else
+can happen until it unblocks by getting space in the queue.
+
+Deadpool itself needs to do actions around job management, so
+this is why we have a separate "supervisor" thread for each
+worker process.
 
 """
 import concurrent.futures
