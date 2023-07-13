@@ -64,6 +64,10 @@ you must type ``$ pip install deadpool-executor``. The import
 name is *deadpool*, so in your Python code you must type
 ``import deadpool`` to use it.
 
+I try quite hard to keep dependencies to a minimum. Currently
+``Deadpool`` has no dependencies other than ``psutil`` which
+is simply too useful to avoid for this library.
+
 Why would I want to use this?
 -----------------------------
 
