@@ -357,7 +357,10 @@ class Deadpool(Executor):
                 return
 
         if self.max_worker_memory_bytes is not None:
-            if wp.get_rss_bytes() >= self.max_worker_memory_bytes:
+            mem = wp.get_rss_bytes()
+            logger.debug(f"Worker {wp.pid} has {mem} bytes of RSS memory.")
+            if mem >= self.max_worker_memory_bytes:
+                logger.debug(f"Worker {wp.pid} hit max memory threshold.")
                 wp.shutdown(wait=False)
                 self.add_worker_to_pool()
                 return
@@ -568,7 +571,7 @@ def kill_proc_tree(
     timeout=None,
     on_terminate=None,
     allow_kill_self=False,
-):  # pragma: no cover
+):
     """Kill a process tree (including grandchildren) with signal
     "sig" and return a (gone, still_alive) tuple.
     "on_terminate", if specified, is a callback function which is
