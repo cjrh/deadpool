@@ -32,7 +32,7 @@ jobs:
           objects.githubusercontent.com:443
 
     - name: "Checkout code"
-      uses: actions/checkout@3df4ab11eba7bda6032a0b82a6bb43b11571feac # tag=v3.0.0
+      uses: actions/checkout@8ade135a41bc03ea155e62e844d188df1ea18608 # tag=v3.0.0
 
     - name: Set up Python
       uses: actions/setup-python@65d7f2d534ac1bc67fcd62888c5f4f3d2cb2b236
