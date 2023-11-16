@@ -27,7 +27,7 @@ jobs:
 
     steps:
     - name: Harden Runner
-      uses: step-security/harden-runner@8ca2b8b2ece13480cda6dacd3511b49857a23c09 # v1
+      uses: step-security/harden-runner@eb238b55efaa70779f274895e782ed17c84f2895 # v1
       with:
         egress-policy: block
         disable-telemetry: true
@@ -58,7 +58,7 @@ jobs:
 
     steps:
     - name: Harden Runner
-      uses: step-security/harden-runner@8ca2b8b2ece13480cda6dacd3511b49857a23c09
+      uses: step-security/harden-runner@eb238b55efaa70779f274895e782ed17c84f2895
       with:
         egress-policy: block
         allowed-endpoints: >
@@ -115,7 +115,7 @@ jobs:
 
     steps:
     - name: Harden Runner
-      uses: step-security/harden-runner@8ca2b8b2ece13480cda6dacd3511b49857a23c09
+      uses: step-security/harden-runner@eb238b55efaa70779f274895e782ed17c84f2895
       with:
         egress-policy: audit # TODO: change to 'egress-policy: block' after couple of runs
 
@@ -144,7 +144,7 @@ jobs:
 
     steps:
     - name: Harden Runner
-      uses: step-security/harden-runner@8ca2b8b2ece13480cda6dacd3511b49857a23c09 # v2.5.1
+      uses: step-security/harden-runner@eb238b55efaa70779f274895e782ed17c84f2895 # v2.6.1
       with:
         egress-policy: audit # TODO: change to 'egress-policy: block' after couple of runs
 
