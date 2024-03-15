@@ -47,7 +47,7 @@ jobs:
       with:
         fetch-depth: 0
 
-    - uses: psf/black@ec91a2be3c44d88e1a3960a4937ad6ed3b63464e # stable
+    - uses: psf/black@552baf822992936134cbd31a38f69c8cfe7c0f05 # stable
 
   dependency-scan:
     permissions:
