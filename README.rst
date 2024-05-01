@@ -55,6 +55,12 @@ to understand that ``Deadpool`` makes very specific tradeoffs that
 can result in quite different behaviour to the stdlib
 implementation.
 
+Licence
+=======
+
+This project can be licenced either under the terms of the `Apache 2.0`_
+licence, or the `Affero GPL 3.0`_ licence. The choice is yours.
+
 Installation
 ------------
 
@@ -657,3 +663,5 @@ I currently do:
 .. _RuntimeError: https://github.com/noxdafox/pebble/issues/42#issuecomment-551245730
 .. _OOM killer: https://en.wikipedia.org/wiki/Out_of_memory#Out_of_memory_management
 .. _multiprocessing.Pool: https://docs.python.org/3.11/library/multiprocessing.html#multiprocessing.pool.Pool
+.. _Apache 2.0: https://www.apache.org/licenses/LICENSE-2.0
+.. _Affero GPL 3.0: https://www.gnu.org/licenses/agpl-3.0.html
