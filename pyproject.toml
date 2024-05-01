@@ -6,7 +6,6 @@ build-backend = "flit_core.buildapi"
 name = "deadpool-executor"
 authors = [{name = "Caleb Hattingh", email = "caleb.hattingh@gmail.com"}]
 dynamic = ["version", "description"]
-license = {file = "LICENSE"}
 readme = "README.rst"
 dependencies = [
     "psutil",
