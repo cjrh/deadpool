@@ -368,72 +368,82 @@ class Deadpool(Executor):
         self.workers.put(wp)
 
     def run_task(self, fn, args, kwargs, timeout, fut: Future):
-        try:
-            worker: WorkerProcess = self.get_process()
+        while True:
             try:
-                worker.submit_job((fn, args, kwargs, timeout))
-            except (pickle.PicklingError, AttributeError) as e:
-                # If the user passed in a function or params that can't
-                # be pickled, use the future to communicate the error.
-                fut.set_exception(e)
+                worker: WorkerProcess = self.get_process()
+                try:
+                    worker.submit_job((fn, args, kwargs, timeout))
+                except (pickle.PicklingError, AttributeError) as e:
+                    # If the user passed in a function or params that can't
+                    # be pickled, use the future to communicate the error.
+                    fut.set_exception(e)
+                    self.done_with_process(worker)
+                    return
+    
+                fut.pid = worker.pid
+                self.running_futs.add(fut)
+    
+                while True:
+                    if worker.results_are_available():
+                        try:
+                            results = worker.get_results()
+                        except EOFError:
+                            fut.set_exception(
+                                ProcessError("Worker process died unexpectedly")
+                            )
+                            self.restart_worker(worker)
+                        except BaseException as e:
+                            logger.debug(f"Unexpected exception from worker: {e}")
+                            fut.set_exception(e)
+                            self.restart_worker(worker)
+                        else:
+                            if isinstance(results, BaseException):
+                                fut.set_exception(results)
+                            else:
+                                fut.set_result(results)
+    
+                            if isinstance(results, TimeoutError):
+                                logger.debug(
+                                    f"TimeoutError on {worker.pid}, setting ok=False"
+                                )
+                                worker.ok = False
+                        finally:
+                            break
+                    elif not worker.is_alive():
+                        logger.debug(f"p is no longer alive: {worker.process}")
+                        try:
+                            signame = signal.strsignal(-worker.process.exitcode)
+                        except (ValueError, TypeError):  # pragma: no cover
+                            signame = "Unknown"
+    
+                        if not fut.done():
+                            # It is possible that fut has already had a result set on
+                            # it. If that's the case we'll do nothing. Otherwise, put
+                            # an exception reporting the unexpected situation.
+                            msg = (
+                                f"Subprocess {worker.pid} completed unexpectedly with "
+                                f"exitcode {worker.process.exitcode} ({signame})"
+                            )
+                            try:
+                                fut.set_exception(ProcessError(msg))
+                            except InvalidStateError:  # pragma: no cover
+                                # We still have to catch this even though there is a
+                                # check for `fut.done()`, simply due to an possible
+                                # race between the done check and the set_exception call.
+                                pass
+    
+                        break
+                    else:
+                        pass  # pragma: no cover
+    
                 self.done_with_process(worker)
                 return
-
-            fut.pid = worker.pid
-            self.running_futs.add(fut)
-
-            while True:
-                if worker.results_are_available():
-                    try:
-                        results = worker.get_results()
-                    except EOFError:
-                        fut.set_exception(
-                            ProcessError("Worker process died unexpectedly")
-                        )
-                    except BaseException as e:
-                        logger.debug(f"Unexpected exception from worker: {e}")
-                        fut.set_exception(e)
-                    else:
-                        if isinstance(results, BaseException):
-                            fut.set_exception(results)
-                        else:
-                            fut.set_result(results)
-
-                        if isinstance(results, TimeoutError):
-                            logger.debug(
-                                f"TimeoutError on {worker.pid}, setting ok=False"
-                            )
-                            worker.ok = False
-                    finally:
-                        break
-                elif not worker.is_alive():
-                    logger.debug(f"p is no longer alive: {worker.process}")
-                    try:
-                        signame = signal.strsignal(-worker.process.exitcode)
-                    except (ValueError, TypeError):  # pragma: no cover
-                        signame = "Unknown"
-
-                    if not fut.done():
-                        # It is possible that fut has already had a result set on
-                        # it. If that's the case we'll do nothing. Otherwise, put
-                        # an exception reporting the unexpected situation.
-                        msg = (
-                            f"Subprocess {worker.pid} completed unexpectedly with "
-                            f"exitcode {worker.process.exitcode} ({signame})"
-                        )
-                        try:
-                            fut.set_exception(ProcessError(msg))
-                        except InvalidStateError:  # pragma: no cover
-                            # We still have to catch this even though there is a
-                            # check for `fut.done()`, simply due to an possible
-                            # race between the done check and the set_exception call.
-                            pass
-
-                    break
-                else:
-                    pass  # pragma: no cover
-
-            self.done_with_process(worker)
+            except BrokenPipeError:
+                logger.warning(
+                    f"Broken pipe encountered while submitting to worker. "
+                    f"Restarting worker and retrying..."
+                )
+                self.restart_worker(worker)
         finally:
             self.submitted_jobs.task_done()
 
@@ -444,6 +454,15 @@ class Deadpool(Executor):
                 self.running_jobs.get_nowait()
             except Empty:  # pragma: no cover
                 logger.warning("Weird error, did not expect running jobs to be empty")
+
+    def restart_worker(self, worker: WorkerProcess):
+        """Restarts a worker process."""
+        logger.info(f"Restarting worker {worker.pid}")
+        try:
+            worker.shutdown(wait=False)  # Terminate the worker gracefully if possible
+        except Exception:
+            logger.warning(f"Error shutting down worker {worker.pid}")
+        self.add_worker_to_pool()
 
     def submit(
         self,
