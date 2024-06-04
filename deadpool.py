@@ -369,14 +369,36 @@ class Deadpool(Executor):
 
     def run_task(self, fn, args, kwargs, timeout, fut: Future):
         try:
-            worker: WorkerProcess = self.get_process()
-            try:
-                worker.submit_job((fn, args, kwargs, timeout))
-            except (pickle.PicklingError, AttributeError) as e:
-                # If the user passed in a function or params that can't
-                # be pickled, use the future to communicate the error.
-                fut.set_exception(e)
-                self.done_with_process(worker)
+            retry_count = 10
+            while retry_count > 0:
+                retry_count -= 1
+                worker: WorkerProcess = self.get_process()
+                try:
+                    worker.submit_job((fn, args, kwargs, timeout))
+                    break
+                except (pickle.PicklingError, AttributeError) as e:
+                    # If the user passed in a function or params that can't
+                    # be pickled, use the future to communicate the error.
+                    # Note that in this scenario, there is nothing wrong
+                    # with the worker process itself, so we don't need to
+                    # shut it down.
+                    fut.set_exception(e)
+                    self.done_with_process(worker)
+                    return
+                except BrokenPipeError:
+                    # This likely comes from trying to send a job over a pipe
+                    # that has been closed. This is a serious problem, and
+                    # we should shut down the worker process and get rid of
+                    # it. We're going to loop back around and try again with
+                    # a new worker.
+                    logger.warning(f"BrokenPipeError on {worker.pid}, retrying.")
+                    kill_proc_tree(worker.pid, sig=signal.SIGKILL)
+            else:
+                # If we get here, we've tried to submit the job to a worker
+                # process multiple times and failed each time. We're giving
+                # up.
+                logger.error("Failed to submit job to worker")
+                fut.set_exception(ProcessError("Failed to submit job to worker"))
                 return
 
             fut.pid = worker.pid
