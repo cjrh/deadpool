@@ -18,6 +18,7 @@ this is why we have a separate "supervisor" thread for each
 worker process.
 
 """
+
 import concurrent.futures
 import ctypes
 import logging
@@ -196,16 +197,13 @@ class Future(concurrent.futures.Future):
                 logger.warning(f"Got error killing pid {self.pid}: {e}")
 
 
-class TimeoutError(concurrent.futures.TimeoutError):
-    ...
+class TimeoutError(concurrent.futures.TimeoutError): ...
 
 
-class ProcessError(mp.ProcessError):
-    ...
+class ProcessError(mp.ProcessError): ...
 
 
-class PoolClosed(Exception):
-    ...
+class PoolClosed(Exception): ...
 
 
 class Deadpool(Executor):
