@@ -8,6 +8,7 @@ import nox
         "3.9",
         "3.10",
         "3.11",
+        "3.12",
     ]
 )
 def test(session):
@@ -21,6 +22,7 @@ def test(session):
         "3.9",
         "3.10",
         "3.11",
+        "3.12",
     ]
 )
 def testcov(session):
