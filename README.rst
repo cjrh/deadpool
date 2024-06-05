@@ -40,7 +40,7 @@
    :backlinks: entry
 
 Deadpool
---------
+========
 
 ``Deadpool`` is a process pool that is really hard to kill.
 
@@ -62,7 +62,7 @@ This project can be licenced either under the terms of the `Apache 2.0`_
 licence, or the `Affero GPL 3.0`_ licence. The choice is yours.
 
 Installation
-------------
+============
 
 The python package name is *deadpool-executor*, so to install
 you must type ``$ pip install deadpool-executor``. The import
@@ -74,7 +74,7 @@ I try quite hard to keep dependencies to a minimum. Currently
 is simply too useful to avoid for this library.
 
 Why would I want to use this?
------------------------------
+=============================
 
 I created ``Deadpool`` because I became frustrated with the
 stdlib `ProcessPoolExecutor`_, and various other community
@@ -106,7 +106,7 @@ a broken state**. Any means by which that can happen will be
 considered a bug.
 
 What differs from `ProcessPoolExecutor`_?
------------------------------------------
+=========================================
 
 ``Deadpool`` is generally similar to `ProcessPoolExecutor`_ since it executes
 tasks in subprocesses, and implements the standard ``Executor`` abstract
@@ -114,7 +114,7 @@ interface. We can draw a few comparisons to the stdlib pool to guide
 your decision process about whether this makes sense for your use-case:
 
 Similarities
-^^^^^^^^^^^^
+------------
 
 - ``Deadpool`` also supports the
   ``max_tasks_per_child`` parameter (a new feature in
@@ -132,7 +132,7 @@ Similarities
   which is the recommended context for multiprocessing.
 
 Differences in existing behaviour
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+---------------------------------
 
 ``Deadpool`` differs from the stdlib pool in the following ways:
 
@@ -160,7 +160,7 @@ Differences in existing behaviour
   requires a glibc system, so probably won't work on Alpine.
 
 New features in Deadpool
-^^^^^^^^^^^^^^^^^^^^^^^^
+------------------------
 
 ``Deadpool`` has the following features that are not present in the
 stdlib pool:
@@ -206,10 +206,10 @@ stdlib pool:
   right now is just to periodically remove a process.
 
 Show me some code
------------------
+=================
 
 Simple case
-^^^^^^^^^^^
+-----------
 
 The simple case works exactly the same as with `ProcessPoolExecutor`_:
 
@@ -232,7 +232,7 @@ same way, and ``Deadpool`` should be a drop-in replacement for
 should read all of this document to see if any of those will affect you.
 
 Timeouts
-^^^^^^^^
+--------
 
 If a timeout is reached on a task, the subprocess running that task will be
 killed, as in ``SIGKILL``. ``Deadpool`` doesn't mind, but your own
@@ -260,7 +260,7 @@ in the call. You can't use a parameter with this name in your function
 kwargs.
 
 Handling OOM killed situations
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+------------------------------
 
 .. code-block:: python
 
@@ -287,10 +287,10 @@ exception when accessing the future, so you have a way of at least tracking
 these events.
 
 Design Details
---------------
+==============
 
 Typical Example - with timeouts
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+-------------------------------
 
 Here's a typical example of how code using Deadpool might look. The
 output of the code further below should be similar to the following:
@@ -341,7 +341,7 @@ that timed out. Below is the code for this example.
   is executing that task is killed, literally with the ``SIGKILL`` signal.
 
 Deadpool tasks have priority
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+----------------------------
 
 The example below is similar to the previous one for timeouts. In fact
 this example retains the timeouts to show how the different features
@@ -409,7 +409,7 @@ Below is the code.
   once the ``max_backlog`` depth has been reached.
 
 Controlling the backlog of submitted tasks
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+------------------------------------------
 
 By default, the ``max_backlog`` parameter is set to 5. This parameter is
 used to create the "submit queue" size. The submit queue is the place
@@ -501,7 +501,7 @@ Obviously, both kinds of callbacks can be added:
         f.add_done_callback(lambda fut: f"Completed {fut.pid=}")
 
 More about shutdown
-^^^^^^^^^^^^^^^^^^^
+-------------------
 
 In the documentation for ProcessPoolExecutor_, the following function
 signature is given for the shutdown_ method of the executor interface:
@@ -563,10 +563,11 @@ when creating the instance:
        fut = exe.submit(...)
 
 Developer Workflow
-------------------
+==================
 
 nox
-^^^
+---
+
 This project uses ``nox``. Follow the instructions for installing
 nox at their page, and then come back here.
 
@@ -587,7 +588,7 @@ You must do the same for ``isort`` and ``ruff``. See the following
 sections for actually using ``nox`` to perform dev actions.
 
 tests
-^^^^^
+-----
 
 To run the tests:
 
@@ -611,7 +612,7 @@ This is nonstandard above, but I customized the ``noxfile.py`` to
 allow this.
 
 style
-^^^^^
+-----
 
 To apply style fixes, and check for any remaining lints,
 
@@ -620,14 +621,14 @@ To apply style fixes, and check for any remaining lints,
    $ nox -t style
 
 docs
-^^^^
+----
 
 The only docs currently are this README, which uses RST. Github
 uses `docutils <https://docutils.sourceforge.io/docs/ref/rst/directives.html>`_
 to render RST.
 
 release
-^^^^^^^
+-------
 
 This project uses flit to release the package to pypi. The whole
 process isn't as automated as I would like, but this is what
