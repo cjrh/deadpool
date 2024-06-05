@@ -1,6 +1,5 @@
 .. image:: https://github.com/cjrh/deadpool/workflows/Python%20application/badge.svg
     :target: https://github.com/cjrh/deadpool/actions
-
 .. image:: https://coveralls.io/repos/github/cjrh/deadpool/badge.svg?branch=main
     :target: https://coveralls.io/github/cjrh/deadpool?branch=main
 
