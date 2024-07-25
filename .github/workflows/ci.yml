@@ -97,7 +97,7 @@ jobs:
         output: 'trivy-results.sarif'
 
     - name: Upload Trivy scan results to GitHub Security tab
-      uses: github/codeql-action/upload-sarif@4fa2a7953630fd2f3fb380f21be14ede0169dd4f # v1
+      uses: github/codeql-action/upload-sarif@5cf07d8b700b67e235fbb65cbc84f69c0cf10464 # v1
       if: always()
       with:
         sarif_file: 'trivy-results.sarif'
@@ -153,16 +153,16 @@ jobs:
 
     # Initializes the CodeQL tools for scanning.
     - name: Initialize CodeQL
-      uses: github/codeql-action/init@4fa2a7953630fd2f3fb380f21be14ede0169dd4f # v2.2.11
+      uses: github/codeql-action/init@5cf07d8b700b67e235fbb65cbc84f69c0cf10464 # v2.2.11
       with:
         languages: ${{ matrix.language }}
 
     # Autobuild attempts to build any compiled languages  (C/C++, C#, or Java).
     # If this step fails, then you should remove it and run the build manually (see below)
     - name: Autobuild
-      uses: github/codeql-action/autobuild@4fa2a7953630fd2f3fb380f21be14ede0169dd4f # v2.2.11
+      uses: github/codeql-action/autobuild@5cf07d8b700b67e235fbb65cbc84f69c0cf10464 # v2.2.11
 
     - name: Perform CodeQL Analysis
-      uses: github/codeql-action/analyze@4fa2a7953630fd2f3fb380f21be14ede0169dd4f # v2.2.11
+      uses: github/codeql-action/analyze@5cf07d8b700b67e235fbb65cbc84f69c0cf10464 # v2.2.11
       with:
         category: "/language:${{matrix.language}}"
