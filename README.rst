@@ -273,7 +273,7 @@ Handling OOM killed situations
         x = list(range(10**100))
 
     with deadpool.Deadpool() as exe:
-        fut = exe.submit(f, timeout=1.0)
+        fut = exe.submit(f, deadpool_timeout=1.0)
 
         try:
             result = fut.result()
