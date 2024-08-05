@@ -217,7 +217,7 @@ The simple case works exactly the same as with `ProcessPoolExecutor`_:
 
 .. code-block:: python
 
-    from deadpool import Deadpool
+    import deadpool
 
     def f():
         return 123
