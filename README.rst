@@ -320,7 +320,7 @@ that timed out. Below is the code for this example.
 
     def main():
         with deadpool.Deadpool() as exe:
-            futs = (exe.submit(work, timeout=2.0) for _ in range(50))
+            futs = (exe.submit(work, deadpool_timeout=2.0) for _ in range(50))
             for fut in deadpool.as_completed(futs):
                 try:
                     assert fut.result() == 1
