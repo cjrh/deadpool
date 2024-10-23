@@ -596,7 +596,7 @@ To run the tests:
 
 .. code-block:: shell
 
-   $ nox -s tests
+   $ nox -s test
 
 To run tests for a particular version, and say with coverage:
 
