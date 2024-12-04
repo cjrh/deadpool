@@ -15,7 +15,7 @@ import nox
 def test(session):
     session.install(".")
     session.install("pytest")
-    session.run("pytest")
+    session.run("pytest", *session.posargs)
 
 
 @nox.session(
