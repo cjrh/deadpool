@@ -68,6 +68,26 @@ def test_simple(malloc_threshold):
         exe.submit(f)
 
 
+@pytest.mark.parametrize("malloc_threshold", [None, 0, 1_000_000])
+def test_simple_partial(malloc_threshold):
+    from functools import partial
+
+    f = partial(t, 0.05)
+
+    with deadpool.Deadpool(
+        malloc_trim_rss_memory_threshold_bytes=malloc_threshold
+    ) as exe:
+        fut = exe.submit(f)
+        result = fut.result()
+
+    assert result == 0.05
+
+    # Outside the context manager, no new tasks
+    # can be submitted.
+    with pytest.raises(deadpool.PoolClosed):
+        exe.submit(f)
+
+
 def test_simple_batch(logging_initializer):
     with deadpool.Deadpool(max_workers=1, initializer=logging_initializer) as exe:
         futs = [exe.submit(t, 0.1) for _ in range(2)]
