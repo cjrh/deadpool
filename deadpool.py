@@ -234,7 +234,17 @@ class Deadpool(Executor):
             setting up the environment in the worker processes. Subprocesses
             will inherit the environment of the parent process, but crucially,
             they will not inherit any changes made to the environment after
-            the subprocess is created. This is because the environment is
+            the subprocess is created (via `os.environ`). This parameter
+            allows you to specify a mapping of environment variables to
+            propagate to the worker processes. The worker processes will
+            receive these environment variables at the time they are created.
+            There are two important points: firstly, these env vars will
+            be set before the initializer is run, so the initializer can
+            use them. Secondly, these are applied only when the worker
+            process is created, which means that you can dynamically change the
+            values of the dict supplied here, and they will be used in
+            new worker processes as they are created. (The new parameters
+            will not be seen by existing worker processes.)
 
         """
         super().__init__()
