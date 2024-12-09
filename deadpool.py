@@ -245,13 +245,10 @@ class Deadpool(Executor):
         if isinstance(mp_context, str):
             mp_context = mp.get_context(mp_context)
 
-        if propagate_environ:
-            initializer = partial(
-                initializer_environ_propagator,
-                dict(propagate_environ),
-                original_initializer=initializer,
-            )
-
+        # This is stored (instead of immediately currying the `initializer`)
+        # for a very important reason, which you can read about in the
+        # `add_worker_to_pool` method.
+        self.propagate_environ = propagate_environ
         self.ctx = mp_context
         self.initializer = initializer
         self.initargs = initargs
@@ -275,7 +272,7 @@ class Deadpool(Executor):
         )
 
         # TODO: overcommit
-        self.workers = SimpleQueue()
+        self.workers: SimpleQueue[WorkerProcess] = SimpleQueue()
         for _ in range(self.pool_size):
             self.add_worker_to_pool()
         # When a worker is running a job, it will be removed from
@@ -293,8 +290,26 @@ class Deadpool(Executor):
         self.runner_thread.start()
 
     def add_worker_to_pool(self):
+        if self.propagate_environ:
+            # By constructing here, late, we allow the user to make
+            # changes dynamically to the configured env vars and these
+            # will be reflected in the worker processes as they are
+            # added to the pool. This has a large number of interesting
+            # applications, such as dynamically changing the logging
+            # level of the worker processes, or changing the location
+            # of a file that the worker processes need to read, or
+            # changing timeouts and so on. All the user needs to do
+            # is update the value on the Deadpool instance itself.
+            initializer = partial(
+                initializer_environ_propagator,
+                dict(self.propagate_environ),
+                original_initializer=self.initializer,
+            )
+        else:
+            initializer = self.initializer
+
         worker = WorkerProcess(
-            initializer=self.initializer,
+            initializer=initializer,
             initargs=self.initargs,
             finalizer=self.finitializer,
             finargs=self.finitargs,
@@ -303,6 +318,18 @@ class Deadpool(Executor):
             malloc_trim_rss_memory_threshold_bytes=self.malloc_trim_rss_memory_threshold_bytes,
         )
         self.workers.put(worker)
+
+    def clear_workers(self):
+        """Clear all workers from the pool.
+
+        Typically they will all get added back according to the
+        rules for `max_workers` and so on. One neat reason to do
+        this is to have new settings take effect, such as a new
+        environment variable that needs to be set in the workers.
+        """
+        while not self.workers.empty():
+            worker = self.workers.get()
+            worker.shutdown(wait=False)
 
     def runner(self):
         while True:

@@ -135,6 +135,55 @@ def test_env_withflag_custom_init():
     assert result == "123123"
 
 
+def test_env_dynamic():
+    """This test shows how we can dynamically
+    update the environment and have that reflected
+    in the worker processes."""
+    os.environ["DEADPOOL_ENVTEST"] = "123"
+    with deadpool.Deadpool(
+        max_workers=1,
+        max_tasks_per_child=1,
+        # We also want to propagate our own environ
+        propagate_environ=os.environ,
+    ) as exe:
+        fut = exe.submit(envtest, "DEADPOOL_ENVTEST")
+        assert fut.result() == "123"
+
+        os.environ["DEADPOOL_ENVTEST"] = "456"
+        fut = exe.submit(envtest, "DEADPOOL_ENVTEST")
+        assert fut.result() == "456"
+
+        os.environ["DEADPOOL_ENVTEST"] = "789"
+        fut = exe.submit(envtest, "DEADPOOL_ENVTEST")
+        assert fut.result() == "789"
+
+
+def test_env_dynamic_clear():
+    """This test shows how we can dynamically
+    update the environment and have that reflected
+    in the worker processes."""
+    os.environ["DEADPOOL_ENVTEST"] = "123"
+    with deadpool.Deadpool(
+        max_workers=10,
+        # We also want to propagate our own environ
+        propagate_environ=os.environ,
+    ) as exe:
+        fut = exe.submit(envtest, "DEADPOOL_ENVTEST")
+        assert fut.result() == "123"
+
+        os.environ["DEADPOOL_ENVTEST"] = "456"
+        fut = exe.submit(envtest, "DEADPOOL_ENVTEST")
+        # This is the old value because the worker is
+        # a persistent worker and the environment is not
+        # updated.
+        assert fut.result() == "123"
+
+        exe.clear_workers()
+        fut = exe.submit(envtest, "DEADPOOL_ENVTEST")
+        # Now it works because the worker has been replaced.
+        assert fut.result() == "456"
+
+
 ##### End env var propagation #####
 
 @pytest.mark.parametrize("malloc_threshold", [None, 0, 1_000_000])
