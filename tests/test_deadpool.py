@@ -68,6 +68,23 @@ def test_simple(malloc_threshold):
         exe.submit(f)
 
 
+def envtest():
+    return os.environ["DEADPOOL_ENVTEST"]
+
+
+def initializer(env: dict):
+    os.environ.update(env or {})
+
+
+def test_env():
+    os.environ["DEADPOOL_ENVTEST"] = "123"
+    with deadpool.Deadpool(initializer=partial(initializer, dict(os.environ))) as exe:
+        fut = exe.submit(envtest)
+        result = fut.result()
+
+    assert result == "123"
+
+
 @pytest.mark.parametrize("malloc_threshold", [None, 0, 1_000_000])
 def test_simple_partial(malloc_threshold):
     from functools import partial
