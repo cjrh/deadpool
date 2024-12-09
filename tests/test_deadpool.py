@@ -67,7 +67,9 @@ def test_simple(malloc_threshold):
     with pytest.raises(deadpool.PoolClosed):
         exe.submit(f)
 
+
 ##### Env var propagation #####
+
 
 def envtest(env_var):
     return os.environ.get(env_var)
@@ -185,6 +187,7 @@ def test_env_dynamic_clear():
 
 
 ##### End env var propagation #####
+
 
 @pytest.mark.parametrize("malloc_threshold", [None, 0, 1_000_000])
 def test_simple_partial(malloc_threshold):
