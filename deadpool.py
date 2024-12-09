@@ -37,6 +37,8 @@ from dataclasses import dataclass, field
 from multiprocessing.connection import Connection
 from queue import Empty, PriorityQueue, Queue, SimpleQueue
 from typing import Callable, Optional, Tuple
+from collections.abc import Mapping
+from functools import partial
 
 import psutil
 
@@ -223,7 +225,18 @@ class Deadpool(Executor):
         shutdown_cancel_futures: Optional[bool] = None,
         daemon=True,
         malloc_trim_rss_memory_threshold_bytes: Optional[int] = None,
+        propagate_environ: Optional[Mapping] = None,
     ) -> None:
+        """The pool.
+
+        :param propagate_environ: A mapping of environment variables to
+            propagate to the worker processes. This is useful for
+            setting up the environment in the worker processes. Subprocesses
+            will inherit the environment of the parent process, but crucially,
+            they will not inherit any changes made to the environment after
+            the subprocess is created. This is because the environment is
+
+        """
         super().__init__()
 
         if not mp_context:
@@ -231,6 +244,13 @@ class Deadpool(Executor):
 
         if isinstance(mp_context, str):
             mp_context = mp.get_context(mp_context)
+
+        if propagate_environ:
+            initializer = partial(
+                initializer_environ_propagator,
+                dict(propagate_environ),
+                original_initializer=initializer,
+            )
 
         self.ctx = mp_context
         self.initializer = initializer
@@ -778,3 +798,20 @@ def trim_memory() -> None:
     if sys.platform == "linux":
         libc = ctypes.CDLL("libc.so.6")
         libc.malloc_trim(0)
+
+
+def initializer_environ_propagator(
+    environ: dict,
+    original_initializer: Optional[Callable] = None,
+    initargs=(),
+):
+    """Wrap the original initializer with one that sets the
+    environment variables in the given dict."""
+
+    # Quite important that we run this first, so that the
+    # environment variables are set before the original
+    # initializer runs. This allows the original initializer
+    # to use the environment variables.
+    os.environ.update(environ or {})
+    if original_initializer:
+        original_initializer(*(initargs or ()))
