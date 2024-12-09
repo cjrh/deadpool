@@ -37,6 +37,8 @@ from dataclasses import dataclass, field
 from multiprocessing.connection import Connection
 from queue import Empty, PriorityQueue, Queue, SimpleQueue
 from typing import Callable, Optional, Tuple
+from collections.abc import Mapping
+from functools import partial
 
 import psutil
 
@@ -223,7 +225,28 @@ class Deadpool(Executor):
         shutdown_cancel_futures: Optional[bool] = None,
         daemon=True,
         malloc_trim_rss_memory_threshold_bytes: Optional[int] = None,
+        propagate_environ: Optional[Mapping] = None,
     ) -> None:
+        """The pool.
+
+        :param propagate_environ: A mapping of environment variables to
+            propagate to the worker processes. This is useful for
+            setting up the environment in the worker processes. Subprocesses
+            will inherit the environment of the parent process, but crucially,
+            they will not inherit any changes made to the environment after
+            the subprocess is created (via `os.environ`). This parameter
+            allows you to specify a mapping of environment variables to
+            propagate to the worker processes. The worker processes will
+            receive these environment variables at the time they are created.
+            There are two important points: firstly, these env vars will
+            be set before the initializer is run, so the initializer can
+            use them. Secondly, these are applied only when the worker
+            process is created, which means that you can dynamically change the
+            values of the dict supplied here, and they will be used in
+            new worker processes as they are created. (The new parameters
+            will not be seen by existing worker processes.)
+
+        """
         super().__init__()
 
         if not mp_context:
@@ -232,6 +255,10 @@ class Deadpool(Executor):
         if isinstance(mp_context, str):
             mp_context = mp.get_context(mp_context)
 
+        # This is stored (instead of immediately currying the `initializer`)
+        # for a very important reason, which you can read about in the
+        # `add_worker_to_pool` method.
+        self.propagate_environ = propagate_environ
         self.ctx = mp_context
         self.initializer = initializer
         self.initargs = initargs
@@ -255,7 +282,7 @@ class Deadpool(Executor):
         )
 
         # TODO: overcommit
-        self.workers = SimpleQueue()
+        self.workers: SimpleQueue[WorkerProcess] = SimpleQueue()
         for _ in range(self.pool_size):
             self.add_worker_to_pool()
         # When a worker is running a job, it will be removed from
@@ -273,8 +300,26 @@ class Deadpool(Executor):
         self.runner_thread.start()
 
     def add_worker_to_pool(self):
+        if self.propagate_environ:
+            # By constructing here, late, we allow the user to make
+            # changes dynamically to the configured env vars and these
+            # will be reflected in the worker processes as they are
+            # added to the pool. This has a large number of interesting
+            # applications, such as dynamically changing the logging
+            # level of the worker processes, or changing the location
+            # of a file that the worker processes need to read, or
+            # changing timeouts and so on. All the user needs to do
+            # is update the value on the Deadpool instance itself.
+            initializer = partial(
+                initializer_environ_propagator,
+                dict(self.propagate_environ),
+                original_initializer=self.initializer,
+            )
+        else:
+            initializer = self.initializer
+
         worker = WorkerProcess(
-            initializer=self.initializer,
+            initializer=initializer,
             initargs=self.initargs,
             finalizer=self.finitializer,
             finargs=self.finitargs,
@@ -283,6 +328,18 @@ class Deadpool(Executor):
             malloc_trim_rss_memory_threshold_bytes=self.malloc_trim_rss_memory_threshold_bytes,
         )
         self.workers.put(worker)
+
+    def clear_workers(self):
+        """Clear all workers from the pool.
+
+        Typically they will all get added back according to the
+        rules for `max_workers` and so on. One neat reason to do
+        this is to have new settings take effect, such as a new
+        environment variable that needs to be set in the workers.
+        """
+        while not self.workers.empty():
+            worker = self.workers.get()
+            worker.shutdown(wait=False)
 
     def runner(self):
         while True:
@@ -778,3 +835,20 @@ def trim_memory() -> None:
     if sys.platform == "linux":
         libc = ctypes.CDLL("libc.so.6")
         libc.malloc_trim(0)
+
+
+def initializer_environ_propagator(
+    environ: dict,
+    original_initializer: Optional[Callable] = None,
+    initargs=(),
+):
+    """Wrap the original initializer with one that sets the
+    environment variables in the given dict."""
+
+    # Quite important that we run this first, so that the
+    # environment variables are set before the original
+    # initializer runs. This allows the original initializer
+    # to use the environment variables.
+    os.environ.update(environ or {})
+    if original_initializer:
+        original_initializer(*(initargs or ()))

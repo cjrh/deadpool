@@ -68,6 +68,127 @@ def test_simple(malloc_threshold):
         exe.submit(f)
 
 
+##### Env var propagation #####
+
+
+def envtest(env_var):
+    return os.environ.get(env_var)
+
+
+def initializer(env: dict):
+    os.environ.update(env or {})
+
+
+def test_env_fails():
+    os.environ["DEADPOOL_ENVTEST"] = "123"
+    with deadpool.Deadpool() as exe:
+        fut = exe.submit(envtest, "DEADPOOL_ENVTEST")
+        result = fut.result()
+
+    # Changes to `os.environ` do not propagate automatically.
+    assert result is None
+
+
+def test_env_noflag():
+    """This test shows the manual way to DIY."""
+    os.environ["DEADPOOL_ENVTEST"] = "123"
+    with deadpool.Deadpool(initializer=partial(initializer, dict(os.environ))) as exe:
+        fut = exe.submit(envtest, "DEADPOOL_ENVTEST")
+        result = fut.result()
+
+    assert result == "123"
+
+
+def test_env_withflag():
+    """This test shows the automatic way to propagate."""
+    os.environ["DEADPOOL_ENVTEST"] = "123"
+    with deadpool.Deadpool(propagate_environ=os.environ) as exe:
+        fut = exe.submit(envtest, "DEADPOOL_ENVTEST")
+        result = fut.result()
+
+    assert result == "123"
+
+
+def custom_init_set_env():
+    os.environ["DEADPOOL_ENVTEST_2"] = "123" + os.environ["DEADPOOL_ENVTEST"]
+
+
+def custom_init_job():
+    return os.environ["DEADPOOL_ENVTEST_2"]
+
+
+def test_env_withflag_custom_init():
+    """This test shows how automatic propagation can be used
+    with a custom initializer. Importantly, the custom initializer
+    can read the environment variables set by the automatic
+    propagation."""
+    os.environ["DEADPOOL_ENVTEST"] = "123"
+    with deadpool.Deadpool(
+        # The custom initializer will set its own env var
+        initializer=custom_init_set_env,
+        # We also want to propagate our own environ
+        propagate_environ=os.environ,
+    ) as exe:
+        fut = exe.submit(custom_init_job)
+        result = fut.result()
+
+    # The initializer will use the value of DEADPOOL_ENVTEST
+    # to set its own env var, which our job reads back out.
+    assert result == "123123"
+
+
+def test_env_dynamic():
+    """This test shows how we can dynamically
+    update the environment and have that reflected
+    in the worker processes."""
+    os.environ["DEADPOOL_ENVTEST"] = "123"
+    with deadpool.Deadpool(
+        max_workers=1,
+        max_tasks_per_child=1,
+        # We also want to propagate our own environ
+        propagate_environ=os.environ,
+    ) as exe:
+        fut = exe.submit(envtest, "DEADPOOL_ENVTEST")
+        assert fut.result() == "123"
+
+        os.environ["DEADPOOL_ENVTEST"] = "456"
+        fut = exe.submit(envtest, "DEADPOOL_ENVTEST")
+        assert fut.result() == "456"
+
+        os.environ["DEADPOOL_ENVTEST"] = "789"
+        fut = exe.submit(envtest, "DEADPOOL_ENVTEST")
+        assert fut.result() == "789"
+
+
+def test_env_dynamic_clear():
+    """This test shows how we can dynamically
+    update the environment and have that reflected
+    in the worker processes."""
+    os.environ["DEADPOOL_ENVTEST"] = "123"
+    with deadpool.Deadpool(
+        max_workers=10,
+        # We also want to propagate our own environ
+        propagate_environ=os.environ,
+    ) as exe:
+        fut = exe.submit(envtest, "DEADPOOL_ENVTEST")
+        assert fut.result() == "123"
+
+        os.environ["DEADPOOL_ENVTEST"] = "456"
+        fut = exe.submit(envtest, "DEADPOOL_ENVTEST")
+        # This is the old value because the worker is
+        # a persistent worker and the environment is not
+        # updated.
+        assert fut.result() == "123"
+
+        exe.clear_workers()
+        fut = exe.submit(envtest, "DEADPOOL_ENVTEST")
+        # Now it works because the worker has been replaced.
+        assert fut.result() == "456"
+
+
+##### End env var propagation #####
+
+
 @pytest.mark.parametrize("malloc_threshold", [None, 0, 1_000_000])
 def test_simple_partial(malloc_threshold):
     from functools import partial
