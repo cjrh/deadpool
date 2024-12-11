@@ -42,7 +42,7 @@ from functools import partial
 
 import psutil
 
-__version__ = "2024.5.1"
+__version__ = "2024.12.1"
 __all__ = [
     "Deadpool",
     "Future",
