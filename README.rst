@@ -206,6 +206,20 @@ stdlib pool:
   know or suspect there's a real memory leak somewhere in your code
   (or a 3rd-party package!), and the easiest way to deal with that
   right now is just to periodically remove a process.
+- ``Deadpool`` can propagate ``os.environ`` to the subprocesses.
+  Normally, env vars present at the time of the "main" process will
+  propagate to subprocesses, but dynamically modified env vars
+  via ``os.environ`` will not. Actually, it depends on the start
+  method, with ``fork`` doing the propagation, and ``forkserver``
+  and ``spawn`` not doing it. The parameter ``propagate_environ``,
+  e.g., ``propagate_environ=os.environ``, re-enables this for
+  ``forkserver`` and ``spawn``. The supplied mapping will be
+  applied to the subprocesses as they are created. This also means
+  that if you want to modify some settings, you can modify the
+  mapping object at any time, and new subprocesses created after
+  that modification will get the new vars. One example use-case
+  is dynamically changing the logging level within subprocesses.
+
 
 Show me some code
 =================
