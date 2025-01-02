@@ -41,6 +41,7 @@ from collections.abc import Mapping
 from functools import partial
 
 import psutil
+from setproctitle import setproctitle
 
 __version__ = "2024.12.1"
 __all__ = [
@@ -687,6 +688,7 @@ def raw_runner2(
     mem_clear_threshold_bytes: Optional[int] = None,
     kill_proc_tree=kill_proc_tree,
 ):
+    setproctitle("deadpool.worker")
     # This event is used to signal that the "parent"
     # monitor thread should be deactivated.
     evt = threading.Event()
