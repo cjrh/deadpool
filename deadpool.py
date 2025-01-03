@@ -799,7 +799,9 @@ def raw_runner2(
             # render the traceback to a string and add that to the exception
             # text. This approach also works for when deadpool can be distributed
             # across multiple machines, since the traceback is a string.
-            traceback_str = "".join(traceback.format_exception(type(e), e, e.__traceback__))
+            traceback_str = "".join(
+                traceback.format_exception(type(e), e, e.__traceback__)
+            )
             # Modify the exception's args to include the traceback
             # This changes the string representation of the exception
             e.args = (f"{e}\n{traceback_str}",) + e.args[1:]
