@@ -793,6 +793,18 @@ def raw_runner2(
                     f"{traceback.format_exception(pickle_error)}"
                 )
                 e = ProcessError(msg)
+
+            # Because we can't retain the traceback (can't be pickled by default,
+            # an external library like "tblib" would be needed), we're going to
+            # render the traceback to a string and add that to the exception
+            # text. This approach also works for when deadpool can be distributed
+            # across multiple machines, since the traceback is a string.
+            traceback_str = "".join(
+                traceback.format_exception(type(e), e, e.__traceback__)
+            )
+            # Modify the exception's args to include the traceback
+            # This changes the string representation of the exception
+            e.args = (f"{e}\n{traceback_str}",) + e.args[1:]
             conn_send_safe(e)
         else:
             conn_send_safe(results)
