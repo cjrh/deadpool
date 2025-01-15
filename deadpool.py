@@ -446,7 +446,11 @@ class Deadpool(Executor):
                     # we should shut down the worker process and get rid of
                     # it. We're going to loop back around and try again with
                     # a new worker.
+                    # TODO: it seems that this might be expected in situations
+                    #  where the worker process often OOMs. As such, not sure
+                    #  whether logging at warning level is appropriate.
                     logger.warning(f"BrokenPipeError on {worker.pid}, retrying.")
+                    self.done_with_process(worker)
                     kill_proc_tree(worker.pid, sig=signal.SIGKILL)
             else:
                 # If we get here, we've tried to submit the job to a worker
