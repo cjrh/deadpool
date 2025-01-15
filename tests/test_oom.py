@@ -3,23 +3,24 @@ import psutil
 import deadpool
 from deadpool import Deadpool
 
+
 def worker(mb):
-    list = [
-        1
-    ] * mb * 1024 * 1024
+    list = [1] * mb * 1024 * 1024
 
     # Use psutil to check our own memory usage. If greater than
     # 500 MB, sigkill ourselves
     if psutil.Process().memory_info().rss > 500 * 1024 * 1024:
         import os
-        print('bad')
+
+        print("bad")
         os.kill(os.getpid(), 9)
 
-    print('ok')
+    print("ok")
     return True
 
+
 def test_oom():
-    """ Verify that jobs continue to run even if some of them OOM
+    """Verify that jobs continue to run even if some of them OOM
 
     The terminal output will look something like this:
 
@@ -45,15 +46,10 @@ def test_oom():
 
     """
     import random
-    tasks = [
-        random.randint(1, 10)
-        for _ in range(100)
-    ]
 
-    too_big_tasks = [
-        500
-        for _ in range(10)
-    ]
+    tasks = [random.randint(1, 10) for _ in range(100)]
+
+    too_big_tasks = [500 for _ in range(10)]
 
     all_tasks = tasks + too_big_tasks
     random.shuffle(all_tasks)
@@ -78,4 +74,3 @@ def test_oom():
 
     assert count == len(tasks)
     assert failed == len(too_big_tasks)
-
