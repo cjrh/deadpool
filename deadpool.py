@@ -447,6 +447,7 @@ class Deadpool(Executor):
                     # it. We're going to loop back around and try again with
                     # a new worker.
                     logger.warning(f"BrokenPipeError on {worker.pid}, retrying.")
+                    self.done_with_process(worker)
                     kill_proc_tree(worker.pid, sig=signal.SIGKILL)
             else:
                 # If we get here, we've tried to submit the job to a worker
