@@ -265,7 +265,11 @@ class Deadpool(Executor):
         self.finitializer = finalizer
         self.finitargs = finalargs
         self.pool_size = max_workers or len(os.sched_getaffinity(0))
-        self.min_workers = min_workers or self.pool_size
+        if min_workers is None:
+            self.min_workers = self.pool_size
+        else:
+            self.min_workers = min_workers
+
         self.max_tasks_per_child = max_tasks_per_child
         self.max_worker_memory_bytes = max_worker_memory_bytes
         self.submitted_jobs: PriorityQueue[PrioritizedItem] = PriorityQueue(
