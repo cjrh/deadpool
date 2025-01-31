@@ -28,7 +28,7 @@ def main():
             time.sleep(random.randrange(0, 10) / 10)
             w = random.randrange(0, 50) / 10
             exe.submit(worker, results, w, deadpool_timeout=4)
-            print(f"{exe.workers.qsize()=} {len(exe.busy_workers)=}")
+            print(f"{exe.workers.qsize()=} {len(exe.busy_workers)=} {len(exe.existing_workers)=}")
 
     outcome = []
     while not results.empty():

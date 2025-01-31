@@ -277,6 +277,7 @@ class Deadpool(Executor):
         )
         self.running_jobs = Queue(maxsize=self.pool_size)
         self.running_futs = weakref.WeakSet()
+        self.existing_workers = weakref.WeakSet()
         self.closed = False
         self.shutdown_wait = shutdown_wait
         self.shutdown_cancel_futures = shutdown_cancel_futures
@@ -332,6 +333,7 @@ class Deadpool(Executor):
             malloc_trim_rss_memory_threshold_bytes=self.malloc_trim_rss_memory_threshold_bytes,
         )
         self.workers.put(worker)
+        self.existing_workers.add(worker)
 
     def clear_workers(self):
         """Clear all workers from the pool.
