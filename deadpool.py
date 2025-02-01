@@ -147,10 +147,10 @@ class WorkerProcess:
 
         self.connection_receive_msgs_from_process.close()
 
-        if self.connection_send_msgs_to_process.writable:
+        if self.connection_send_msgs_to_process.writable:  # pragma: no branch
             try:
                 self.connection_send_msgs_to_process.send(None)
-            except BrokenPipeError:
+            except BrokenPipeError:  # pragma: no cover
                 pass
             else:
                 self.connection_send_msgs_to_process.close()
@@ -608,7 +608,7 @@ class Deadpool(Executor):
             try:
                 worker = self.workers.get_nowait()
                 worker.shutdown()
-            except Empty:
+            except Empty:  # pragma: no cover
                 break
 
         # There may be a few processes left in the
@@ -677,7 +677,7 @@ def kill_proc_tree(
     for p in children:
         try:
             p.send_signal(sig)
-        except psutil.NoSuchProcess:
+        except psutil.NoSuchProcess:  # pragma: no cover
             pass
 
     gone, alive = psutil.wait_procs(children, timeout=timeout, callback=on_terminate)
@@ -730,7 +730,7 @@ def raw_runner2(
             conn.send(obj)
         except BrokenPipeError:  # pragma: no cover
             logger.debug("Pipe not usable")
-        except BaseException:
+        except BaseException:  # pragma: no cover
             logger.exception("Unexpected pipe error")
 
     def timed_out():
