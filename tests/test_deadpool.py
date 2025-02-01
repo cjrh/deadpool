@@ -65,12 +65,89 @@ def test_simple(malloc_threshold, daemon, min_workers):
         fut = exe.submit(t, 0.05)
         result = fut.result()
 
+        time.sleep(0.5)
+        stats = exe.get_statistics()
+
     assert result == 0.05
+    print(f"{stats=}")
+
+    assert stats == {
+        "tasks_received": 1,
+        "tasks_launched": 1,
+        "tasks_failed": 0,
+        "worker_processes_created": 10,
+        "max_workers_busy_concurrently": 1,
+        "worker_processes_still_alive": 10,
+        "worker_processes_idle": 10,
+        "worker_processes_busy": 0,
+    }
 
     # Outside the context manager, no new tasks
     # can be submitted.
     with pytest.raises(deadpool.PoolClosed):
         exe.submit(f)
+
+
+def test_stats():
+    with deadpool.Deadpool(
+        min_workers=5,
+        max_workers=10,
+    ) as exe:
+        futs = []
+        for _ in range(6):
+            futs.append(exe.submit(t, 0.05))
+
+        results = [fut.result() for fut in deadpool.as_completed(futs)]
+        time.sleep(0.5)
+        stats = exe.get_statistics()
+
+    assert results == [0.05] * 6
+    print(f"{stats=}")
+    assert stats == {
+        "tasks_received": 6,
+        "tasks_launched": 6,
+        "tasks_failed": 0,
+        "worker_processes_created": 10,
+        # This is an important one.
+        "max_workers_busy_concurrently": 6,
+        "worker_processes_still_alive": 5,
+        "worker_processes_idle": 5,
+        "worker_processes_busy": 0,
+    }
+
+
+def test_stats_with_errors():
+    with deadpool.Deadpool(
+        min_workers=5,
+        max_workers=10,
+    ) as exe:
+        futs = []
+        for _ in range(50):
+            futs.append(exe.submit(t, 0.05))
+            futs.append(exe.submit(f_err, Exception))
+
+        results = []
+        for fut in deadpool.as_completed(futs):
+            try:
+                results.append(fut.result())
+            except Exception:
+                pass
+
+        time.sleep(0.5)
+        stats = exe.get_statistics()
+
+    assert results == [0.05] * 50
+    print(f"{stats=}")
+    assert stats == {
+        "tasks_received": 100,
+        "tasks_launched": 100,
+        "tasks_failed": 50,
+        "worker_processes_created": 10,
+        "max_workers_busy_concurrently": 10,
+        "worker_processes_still_alive": 5,
+        "worker_processes_idle": 5,
+        "worker_processes_busy": 0,
+    }
 
 
 ##### Env var propagation #####
