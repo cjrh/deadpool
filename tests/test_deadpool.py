@@ -297,7 +297,10 @@ def test_simple_batch(logging_initializer):
     assert results == [0.1] * 2
 
 
-@pytest.mark.parametrize("ctx", ["spawn", "forkserver", mp.get_context("spawn"), mp.get_context("forkserver")])
+@pytest.mark.parametrize(
+    "ctx",
+    ["spawn", "forkserver", mp.get_context("spawn"), mp.get_context("forkserver")],
+)
 def test_ctx(logging_initializer, ctx):
     with deadpool.Deadpool(mp_context=ctx, initializer=logging_initializer) as exe:
         fut = exe.submit(t, 0.05)
