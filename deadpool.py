@@ -81,8 +81,8 @@ class Stat:
         with self.lock:
             self.value += value
 
-    def set(self, reset_value: int = 0):
-        self.value = reset_value
+    def set(self, value: int = 0):
+        self.value = value
 
 
 class Statistics:
@@ -535,7 +535,7 @@ class Deadpool(Executor):
                     # TODO: probably this should be moved into the `done_with_process`
                     #  and can act on the `worker.ok` flag.
                     kill_proc_tree(worker.pid, sig=signal.SIGKILL)
-            else:
+            else:  # pragma: no cover
                 # If we get here, we've tried to submit the job to a worker
                 # process multiple times and failed each time. We're giving
                 # up.

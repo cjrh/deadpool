@@ -5,6 +5,7 @@ import queue
 import signal
 import sys
 import time
+import multiprocessing as mp
 from concurrent.futures import CancelledError, as_completed
 from contextlib import contextmanager
 from functools import partial
@@ -17,11 +18,6 @@ import deadpool
 @pytest.fixture()
 def logging_initializer():
     return partial(logging.basicConfig, level=logging.DEBUG)
-
-
-async def test_func():
-    await asyncio.sleep(0.1)
-    return 42
 
 
 def f():
@@ -67,6 +63,8 @@ def test_simple(malloc_threshold, daemon, min_workers):
 
         time.sleep(0.5)
         stats = exe.get_statistics()
+        # To exercise the reset path
+        exe._statistics.reset_counters()
 
     assert result == 0.05
     print(f"{stats=}")
@@ -299,7 +297,7 @@ def test_simple_batch(logging_initializer):
     assert results == [0.1] * 2
 
 
-@pytest.mark.parametrize("ctx", ["spawn", "forkserver"])
+@pytest.mark.parametrize("ctx", ["spawn", "forkserver", mp.get_context("spawn"), mp.get_context("forkserver")])
 def test_ctx(logging_initializer, ctx):
     with deadpool.Deadpool(mp_context=ctx, initializer=logging_initializer) as exe:
         fut = exe.submit(t, 0.05)
