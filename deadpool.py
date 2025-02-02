@@ -464,7 +464,6 @@ class Deadpool(Executor):
         # The `1` is for `wp` itself.
         total_workers = count_workers_busy + count_workers_idle + 1
         there_are_more_workers_than_min = total_workers > self.min_workers
-        there_are_idle_workers = count_workers_idle > 0
         task_backlog_is_empty = backlog_size == 0
 
         # if there_are_more_workers_than_min and (there_are_idle_workers or task_backlog_is_empty):
