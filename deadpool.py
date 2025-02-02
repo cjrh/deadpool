@@ -32,6 +32,7 @@ import traceback
 import typing
 import weakref
 import atexit
+import json
 from concurrent.futures import CancelledError, Executor, InvalidStateError, as_completed
 from dataclasses import dataclass, field
 from multiprocessing.connection import Connection
@@ -69,6 +70,46 @@ logger = logging.getLogger("deadpool")
 #         tracker._stop()
 #     except Exception:
 #         logger.info("Error stopping the multiprocessing resource tracker")
+
+
+@dataclass
+class Stat:
+    lock: threading.Lock
+    value: int = 0
+
+    def increment(self, value: int = 1):
+        with self.lock:
+            self.value += value
+
+    def set(self, value: int = 0):
+        self.value = value
+
+
+class Statistics:
+    def __init__(self):
+        self._lock = threading.Lock()
+
+        self.tasks_received = Stat(self._lock, 0)
+        self.tasks_launched = Stat(self._lock, 0)
+        self.tasks_failed = Stat(self._lock, 0)
+        self.worker_processes_created = Stat(self._lock, 0)
+        self.max_workers_busy_concurrently = Stat(self._lock, 0)
+
+    def reset_counters(self):
+        self.tasks_received.set()
+        self.tasks_launched.set()
+        self.tasks_failed.set()
+        self.worker_processes_created.set()
+        self.max_workers_busy_concurrently.set()
+
+    def to_dict(self) -> dict[str, typing.Any]:
+        return {
+            "tasks_received": self.tasks_received.value,
+            "tasks_launched": self.tasks_launched.value,
+            "tasks_failed": self.tasks_failed.value,
+            "worker_processes_created": self.worker_processes_created.value,
+            "max_workers_busy_concurrently": self.max_workers_busy_concurrently.value,
+        }
 
 
 @dataclass(order=True)
@@ -277,6 +318,7 @@ class Deadpool(Executor):
         )
         self.running_jobs = Queue(maxsize=self.pool_size)
         self.running_futs = weakref.WeakSet()
+        self.existing_workers = weakref.WeakSet()
         self.closed = False
         self.shutdown_wait = shutdown_wait
         self.shutdown_cancel_futures = shutdown_cancel_futures
@@ -284,6 +326,7 @@ class Deadpool(Executor):
         self.malloc_trim_rss_memory_threshold_bytes = (
             malloc_trim_rss_memory_threshold_bytes
         )
+        self._statistics = Statistics()
 
         # TODO: overcommit
         self.workers: SimpleQueue[WorkerProcess] = SimpleQueue()
@@ -302,6 +345,17 @@ class Deadpool(Executor):
             target=self.runner, name="deadpool.runner", daemon=True
         )
         self.runner_thread.start()
+
+    def get_statistics(self) -> dict[str, typing.Any]:
+        stats = self._statistics.to_dict()
+
+        # These are not counters; they are determined at the time of the
+        # call based on the state of the worker processes.
+        stats["worker_processes_still_alive"] = len(self.existing_workers)
+        stats["worker_processes_idle"] = self.workers.qsize()
+        stats["worker_processes_busy"] = len(self.busy_workers)
+
+        return stats
 
     def add_worker_to_pool(self):
         if self.propagate_environ:
@@ -332,6 +386,8 @@ class Deadpool(Executor):
             malloc_trim_rss_memory_threshold_bytes=self.malloc_trim_rss_memory_threshold_bytes,
         )
         self.workers.put(worker)
+        self._statistics.worker_processes_created.increment()
+        self.existing_workers.add(worker)
 
     def clear_workers(self):
         """Clear all workers from the pool.
@@ -373,6 +429,7 @@ class Deadpool(Executor):
                 continue
 
             t = threading.Thread(target=self.run_task, args=job, daemon=True)
+            self._statistics.tasks_launched.increment()
             t.start()
 
     def get_process(self) -> WorkerProcess:
@@ -386,17 +443,35 @@ class Deadpool(Executor):
 
         wp = self.workers.get()
         self.busy_workers.add(wp)
+        if (
+            len(self.busy_workers)
+            > self._statistics.max_workers_busy_concurrently.value
+        ):
+            self._statistics.max_workers_busy_concurrently.value = len(
+                self.busy_workers
+            )
+
         return wp
 
     def done_with_process(self, wp: WorkerProcess):
+        # This worker is done with its job and is no longer busy.
         self.busy_workers.remove(wp)
 
-        bw = len(self.busy_workers)
-        mw = self.min_workers
-        qs = self.workers.qsize()
+        count_workers_busy = len(self.busy_workers)
+        count_workers_idle = self.workers.qsize()
+        backlog_size = self.submitted_jobs.qsize()
 
-        total_workers = bw + qs
-        if total_workers > mw and qs > 0:
+        # The `1` is for `wp` itself.
+        total_workers = count_workers_busy + count_workers_idle + 1
+        there_are_more_workers_than_min = total_workers > self.min_workers
+        task_backlog_is_empty = backlog_size == 0
+
+        # if there_are_more_workers_than_min and (there_are_idle_workers or task_backlog_is_empty):
+        if there_are_more_workers_than_min and task_backlog_is_empty:
+            # We have more workers than the minimum, and there is no backlog of
+            # tasks. This implies any tasks currently in play have already been picked
+            # up by workers in the pool, or the pool is idle. We can safely remove
+            # this worker from the pool.
             wp.shutdown(wait=False)
             return
 
@@ -454,9 +529,12 @@ class Deadpool(Executor):
                     #  where the worker process often OOMs. As such, not sure
                     #  whether logging at warning level is appropriate.
                     logger.warning(f"BrokenPipeError on {worker.pid}, retrying.")
+                    worker.ok = False
                     self.done_with_process(worker)
+                    # TODO: probably this should be moved into the `done_with_process`
+                    #  and can act on the `worker.ok` flag.
                     kill_proc_tree(worker.pid, sig=signal.SIGKILL)
-            else:
+            else:  # pragma: no cover
                 # If we get here, we've tried to submit the job to a worker
                 # process multiple times and failed each time. We're giving
                 # up.
@@ -472,19 +550,23 @@ class Deadpool(Executor):
                     try:
                         results = worker.get_results()
                     except EOFError:
+                        self._statistics.tasks_failed.increment()
                         fut.set_exception(
                             ProcessError("Worker process died unexpectedly")
                         )
                     except BaseException as e:
+                        self._statistics.tasks_failed.increment()
                         logger.debug(f"Unexpected exception from worker: {e}")
                         fut.set_exception(e)
                     else:
                         if isinstance(results, BaseException):
+                            self._statistics.tasks_failed.increment()
                             fut.set_exception(results)
                         else:
                             fut.set_result(results)
 
                         if isinstance(results, TimeoutError):
+                            self._statistics.tasks_failed.increment()
                             logger.debug(
                                 f"TimeoutError on {worker.pid}, setting ok=False"
                             )
@@ -492,6 +574,7 @@ class Deadpool(Executor):
                     finally:
                         break
                 elif not worker.is_alive():
+                    self._statistics.tasks_failed.increment()
                     logger.debug(f"p is no longer alive: {worker.process}")
                     try:
                         signame = signal.strsignal(-worker.process.exitcode)
@@ -554,6 +637,7 @@ class Deadpool(Executor):
                 item=(fn, args, kwargs, deadpool_timeout, fut),
             )
         )
+        self._statistics.tasks_received.increment()
         return fut
 
     def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:

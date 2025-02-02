@@ -220,6 +220,119 @@ stdlib pool:
   that modification will get the new vars. One example use-case
   is dynamically changing the logging level within subprocesses.
 
+Minimum and Maximum Workers
+~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+``Deadpool`` has a ``min_workers`` and ``max_workers`` parameter.
+While ``max_workers`` is the same as the stdlib pool, ``min_workers``
+is a new feature.
+
+The ``min_workers`` parameter allows deadpool to "scale down" the
+pool when it is idle. This is another strategy alongside other
+features like ``max_tasks_per_child`` and ``max_worker_memory_bytes``
+to help deal with memory bloat in long-running pools.
+
+Statistics
+~~~~~~~~~~
+
+Here is a very simple example of how to get statistics from the
+executor:
+
+.. code-block:: python
+
+    with deadpool.Deadpool() as exe:
+        fut = exe.submit(...)
+        stats = exe.get_statistics()
+
+The call must be made while the executor is still alive. It
+will succeed after the executor is shut down or closed, but
+some of the statistics will be zeroed out.
+
+The call to ``get_statistics`` will return a dictionary with the
+following keys:
+
+- ``tasks_received``: The total number of tasks submitted to the
+  executor. Does not mean that they started running, only that they
+  were successfully submitted.
+- ``tasks_launched``: The total number of tasks that were launched
+  on a subprocess. This records the count of all tasks that were
+  successfully scheduled to run. These tasks were picked up from
+  the submit backlog and given to a worker process to execute.
+- ``tasks_failed``: The total number of tasks that failed. This
+  includes tasks that raised an exception, and tasks that were
+  killed due to a timeout, and really any other reason that a task
+  failed.
+- ``worker_processes_created``: The total number of subprocesses that
+  were ever created by the executor. This can be, and often will be
+  greater than the `max_workers` setting because there are many options
+  that can cause workers to be discarded and replaced. Examples of these
+  might be the ``max_tasks_per_child`` setting, or the ``min_workers``
+  setting, or the memory thresholds and so on.
+- ``max_workers_busy_concurrently``: The maximum number of workers that
+  were ever busy at the same time. This is a useful statistic to
+  decide whether you might consider increasing or decreasing the size
+  of the pool. For example, if your ``max_workers`` is set to 100, but
+  after running for, say, a week, you see that ``max_workers_busy_concurrently``
+  is only 50, then you might consider reducing the pool size to 50.
+  The system memory manager on linux likes to hold onto heap memory.
+  If your have more workers than you need, you'll see that the system
+  memory usage over time is going to be higher than it needs to be
+  because even when the pool is fully idle, you will still observe
+  the persistent worker processes having a large memory allocation
+  even though no jobs are running. This is a symptom of malloc
+  retention behaviour.
+- ``worker_processes_still_alive``: The number of worker processes that
+  are still alive. This includes both idle and busy worker processes.
+  This is mainly a debugging statistic that I can use to check whether
+  worker processes are "leaking" somehow and not being cleaned up
+  correctly. This number should not be greater than the ``max_workers``.
+  (It could be, temporarily, depending on the exact timing and strategy
+  in the inner workings of the executor, but on average it should not)
+- ``worker_processes_idle``: The number of worker processes that are idle.
+- ``worker_processes_busy``: The number of worker processes that are busy.
+
+
+Here is an example from the tests to explain what each of the
+statistics mean:
+
+.. code-block:: python
+
+    with deadpool.Deadpool(min_workers=5, max_workers=10) as exe:
+        futs = []
+        for _ in range(50):
+            futs.append(exe.submit(t, 0.05))
+            futs.append(exe.submit(f_err, Exception))
+
+        results = []
+        for fut in deadpool.as_completed(futs):
+            try:
+                results.append(fut.result())
+            except Exception:
+                pass
+
+        time.sleep(0.5)
+        stats = exe.get_statistics()
+
+    assert results == [0.05] * 50
+    print(f"{stats=}")
+    assert stats == {
+        "tasks_received": 100,
+        "tasks_launched": 100,
+        "tasks_failed": 50,
+        "worker_processes_created": 10,
+        "max_workers_busy_concurrently": 10,
+        "worker_processes_still_alive": 5,
+        "worker_processes_idle": 5,
+        "worker_processes_busy": 0,
+    }
+
+In this example, we submit 100 tasks, 50 of which will raise an
+exception. The executor will create 10 worker processes, and
+will have a maximum of 10 workers busy at the same time. After
+all the tasks are completed, we wait for a short time to allow
+the executor to clean up any worker processes that are no longer
+needed. The statistics should show that 5 worker processes are
+still alive, and all of them are idle.
 
 Show me some code
 =================
