@@ -54,7 +54,7 @@ def test_cancel_all_futures():
 
 @pytest.mark.parametrize("malloc_threshold", [None, 0, 1_000_000])
 @pytest.mark.parametrize("daemon", [True, False])
-@pytest.mark.parametrize("min_workers", [None, 0])
+@pytest.mark.parametrize("min_workers", [None, 10])
 def test_simple(malloc_threshold, daemon, min_workers):
     with deadpool.Deadpool(
         malloc_trim_rss_memory_threshold_bytes=malloc_threshold,
