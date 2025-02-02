@@ -71,6 +71,7 @@ logger = logging.getLogger("deadpool")
 #     except Exception:
 #         logger.info("Error stopping the multiprocessing resource tracker")
 
+
 @dataclass
 class Stat:
     lock: threading.Lock
@@ -82,6 +83,7 @@ class Stat:
 
     def set(self, reset_value: int = 0):
         self.value = reset_value
+
 
 class Statistics:
     def __init__(self):
@@ -355,7 +357,6 @@ class Deadpool(Executor):
 
         return stats
 
-
     def add_worker_to_pool(self):
         if self.propagate_environ:
             # By constructing here, late, we allow the user to make
@@ -442,8 +443,13 @@ class Deadpool(Executor):
 
         wp = self.workers.get()
         self.busy_workers.add(wp)
-        if len(self.busy_workers) > self._statistics.max_workers_busy_concurrently.value:
-            self._statistics.max_workers_busy_concurrently.value = len(self.busy_workers)
+        if (
+            len(self.busy_workers)
+            > self._statistics.max_workers_busy_concurrently.value
+        ):
+            self._statistics.max_workers_busy_concurrently.value = len(
+                self.busy_workers
+            )
 
         return wp
 
