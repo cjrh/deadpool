@@ -881,7 +881,7 @@ def raw_runner2(
                     f"An exception occurred but pickling it failed. "
                     f"The original exception is presented here as a string with "
                     f"traceback.\n{e}\n{traceback.format_exception(e)}\n\n"
-                    f"The reason for the pickking failure is the following:\n"
+                    f"The reason for the pickling failure is the following:\n"
                     f"{traceback.format_exception(pickle_error)}"
                 )
                 e = ProcessError(msg)
