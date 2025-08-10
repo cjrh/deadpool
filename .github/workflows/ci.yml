@@ -42,6 +42,7 @@ jobs:
           raw.githubusercontent.com:443
           storage.googleapis.com:443
           y2oiacprodeus2file6.blob.core.windows.net:443  # cache builds
+          release-assets.githubusercontent.com:443  # cache builds
 
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       with:
