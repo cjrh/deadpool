@@ -68,6 +68,7 @@ jobs:
           pkg-containers.githubusercontent.com:443
           objects.githubusercontent.com:443
           mirror.gcr.io:443
+          release-assets.githubusercontent.com:443
 
     - name: Checkout the code
       uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v2
@@ -83,7 +84,7 @@ jobs:
         format: 'sarif'
         vuln-type: 'library'
         severity: 'HIGH,CRITICAL'
-        security-checks: 'vuln,config,secret'
+        scanners: 'vuln,config,secret'
         output: 'trivy-results.sarif'
 
     - name: Run vulnerability scanner in repo mode
@@ -95,7 +96,7 @@ jobs:
         format: 'sarif'
         vuln-type: 'library'
         severity: 'MEDIUM,HIGH,CRITICAL'
-        security-checks: 'vuln,config,secret'
+        scanners: 'vuln,config,secret'
         output: 'trivy-results.sarif'
 
     - name: Upload Trivy scan results to GitHub Security tab
