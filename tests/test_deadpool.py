@@ -345,6 +345,14 @@ def test_shutdown(logging_initializer, wait, cancel_futures):
 
 
 @pytest.mark.parametrize("wait", [True, False])
+def test_shutdown_idempotent(wait):
+    """Calling shutdown() twice must not deadlock."""
+    d = deadpool.Deadpool(max_workers=2)
+    d.shutdown(wait=wait)
+    d.shutdown(wait=wait)
+
+
+@pytest.mark.parametrize("wait", [True, False])
 @pytest.mark.parametrize("cancel_futures", [True, False])
 def test_shutdown_manual(logging_initializer, wait, cancel_futures):
     logging.info("Test start")
