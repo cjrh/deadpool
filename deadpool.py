@@ -642,6 +642,9 @@ class Deadpool(Executor):
         return fut
 
     def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
+        if self.closed:
+            return
+
         logger.debug(f"shutdown: {wait=} {cancel_futures=}")
 
         # No more new tasks can be submitted
@@ -706,16 +709,14 @@ class Deadpool(Executor):
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if not self.closed:
-            kwargs = {}
-            if self.shutdown_wait is not None:
-                kwargs["wait"] = self.shutdown_wait
+        kwargs = {}
+        if self.shutdown_wait is not None:
+            kwargs["wait"] = self.shutdown_wait
 
-            if self.shutdown_cancel_futures is not None:
-                kwargs["cancel_futures"] = self.shutdown_cancel_futures
+        if self.shutdown_cancel_futures is not None:
+            kwargs["cancel_futures"] = self.shutdown_cancel_futures
 
-            self.shutdown(**kwargs)
-
+        self.shutdown(**kwargs)
         self.runner_thread.join()
         return False
 
