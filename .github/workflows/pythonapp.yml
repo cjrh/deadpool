@@ -49,7 +49,7 @@ jobs:
 
     - name: Test with coverage
       run: |
-        nox -s testcov-${NOX_PY}
+        nox -s testcov-${NOX_PY} ${{ matrix.python-version == '3.14t' && '--force-python python' || '' }}
       env:
         NOX_PY: ${{ matrix.python-version == '3.14t' && '3.14' || matrix.python-version }}
         PYTHON_GIL: ${{ matrix.python-version == '3.14t' && '0' || '' }}
