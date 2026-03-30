@@ -14,7 +14,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        python-version: ['3.9', '3.10', '3.11', '3.12', '3.13', '3.14']
+        python-version: ['3.9', '3.10', '3.11', '3.12', '3.13', '3.14', '3.14t']
         os: [ubuntu-latest]
       fail-fast: false
     timeout-minutes: 5
@@ -49,7 +49,10 @@ jobs:
 
     - name: Test with coverage
       run: |
-        nox -s testcov-${{ matrix.python-version }}
+        nox -s testcov-${NOX_PY}
+      env:
+        NOX_PY: ${{ matrix.python-version == '3.14t' && '3.14' || matrix.python-version }}
+        PYTHON_GIL: ${{ matrix.python-version == '3.14t' && '0' || '' }}
 
     - name: Extract branch name
       shell: bash
