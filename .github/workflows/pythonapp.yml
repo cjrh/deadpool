@@ -51,6 +51,11 @@ jobs:
       run: |
         nox -s testcov-${{ matrix.python-version }}
       env:
+        # Free-threaded Python will silently re-enable the GIL at
+        # runtime if any C extension hasn't declared free-threading
+        # support (via Py_mod_gil). Setting PYTHON_GIL=0 prevents
+        # this fallback, ensuring tests actually run without the
+        # GIL rather than quietly falling back to GIL-enabled mode.
         PYTHON_GIL: ${{ endsWith(matrix.python-version, 't') && '0' || '' }}
 
     - name: Extract branch name
