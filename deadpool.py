@@ -320,6 +320,9 @@ class Deadpool(Executor):
         self.running_jobs = Queue(maxsize=self.pool_size)
         self.running_futs = weakref.WeakSet()
         self.existing_workers = weakref.WeakSet()
+        # Lock protecting busy_workers, existing_workers, and
+        # running_futs for thread-safety without the GIL.
+        self._workers_lock = threading.Lock()
         self.closed = False
         self.shutdown_wait = shutdown_wait
         self.shutdown_cancel_futures = shutdown_cancel_futures
@@ -352,9 +355,10 @@ class Deadpool(Executor):
 
         # These are not counters; they are determined at the time of the
         # call based on the state of the worker processes.
-        stats["worker_processes_still_alive"] = len(self.existing_workers)
+        with self._workers_lock:
+            stats["worker_processes_still_alive"] = len(self.existing_workers)
+            stats["worker_processes_busy"] = len(self.busy_workers)
         stats["worker_processes_idle"] = self.workers.qsize()
-        stats["worker_processes_busy"] = len(self.busy_workers)
 
         return stats
 
@@ -388,7 +392,8 @@ class Deadpool(Executor):
         )
         self.workers.put(worker)
         self._statistics.worker_processes_created.increment()
-        self.existing_workers.add(worker)
+        with self._workers_lock:
+            self.existing_workers.add(worker)
 
     def clear_workers(self):
         """Clear all workers from the pool.
@@ -434,7 +439,8 @@ class Deadpool(Executor):
             t.start()
 
     def get_process(self) -> WorkerProcess:
-        bw = len(self.busy_workers)
+        with self._workers_lock:
+            bw = len(self.busy_workers)
         mw = self.pool_size
         qs = self.workers.qsize()
 
@@ -443,22 +449,20 @@ class Deadpool(Executor):
             self.add_worker_to_pool()
 
         wp = self.workers.get()
-        self.busy_workers.add(wp)
-        if (
-            len(self.busy_workers)
-            > self._statistics.max_workers_busy_concurrently.value
-        ):
-            self._statistics.max_workers_busy_concurrently.value = len(
-                self.busy_workers
-            )
+        with self._workers_lock:
+            self.busy_workers.add(wp)
+            busy_count = len(self.busy_workers)
+        with self._statistics.max_workers_busy_concurrently.lock:
+            if busy_count > self._statistics.max_workers_busy_concurrently.value:
+                self._statistics.max_workers_busy_concurrently.value = busy_count
 
         return wp
 
     def done_with_process(self, wp: WorkerProcess):
         # This worker is done with its job and is no longer busy.
-        self.busy_workers.remove(wp)
-
-        count_workers_busy = len(self.busy_workers)
+        with self._workers_lock:
+            self.busy_workers.remove(wp)
+            count_workers_busy = len(self.busy_workers)
         count_workers_idle = self.workers.qsize()
         backlog_size = self.submitted_jobs.qsize()
 
@@ -544,7 +548,8 @@ class Deadpool(Executor):
                 return
 
             fut.pid = worker.pid
-            self.running_futs.add(fut)
+            with self._workers_lock:
+                self.running_futs.add(fut)
 
             while True:
                 if worker.results_are_available():
@@ -680,7 +685,8 @@ class Deadpool(Executor):
         # want to wait, that she probably wants us to also stop
         # running processes.
         if (not wait) and cancel_futures:
-            running_futs = list(self.running_futs)
+            with self._workers_lock:
+                running_futs = list(self.running_futs)
             for fut in running_futs:
                 fut.cancel_and_kill_if_running()
 
@@ -700,8 +706,10 @@ class Deadpool(Executor):
 
         # There may be a few processes left in the
         # `busy_workers` queue. Shut them down too.
-        while self.busy_workers:
-            worker = self.busy_workers.pop()
+        with self._workers_lock:
+            remaining = list(self.busy_workers)
+            self.busy_workers.clear()
+        for worker in remaining:
             worker.shutdown()
 
     def __enter__(self):
