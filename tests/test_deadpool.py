@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import os
+import pickle
 import queue
 import signal
 import sys
@@ -690,7 +691,9 @@ def test_can_pickle_nested_function():
     with deadpool.Deadpool() as exe:
         fut = exe.submit(f)
 
-        with pytest.raises(AttributeError, match="local object"):
+        with pytest.raises(
+            (AttributeError, pickle.PicklingError), match="local object"
+        ):
             fut.result()
 
 
@@ -704,7 +707,9 @@ def test_can_pickle_nested_function_cf():
     with ProcessPoolExecutor() as exe:
         fut = exe.submit(f)
 
-        with pytest.raises(AttributeError, match="local object"):
+        with pytest.raises(
+            (AttributeError, pickle.PicklingError), match="local object"
+        ):
             fut.result()
 
 
@@ -714,7 +719,9 @@ def test_can_pickle_lambda_function():
     with deadpool.Deadpool() as exe:
         fut = exe.submit(lambda: 123)
 
-        with pytest.raises(AttributeError, match="local object"):
+        with pytest.raises(
+            (AttributeError, pickle.PicklingError), match="local object"
+        ):
             fut.result()
 
 

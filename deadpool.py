@@ -572,8 +572,7 @@ class Deadpool(Executor):
                                 f"TimeoutError on {worker.pid}, setting ok=False"
                             )
                             worker.ok = False
-                    finally:
-                        break
+                    break
                 elif not worker.is_alive():
                     self._statistics.tasks_failed.increment()
                     logger.debug(f"p is no longer alive: {worker.process}")
