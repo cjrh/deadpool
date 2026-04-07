@@ -557,19 +557,37 @@ class Deadpool(Executor):
                         results = worker.get_results()
                     except EOFError:
                         self._statistics.tasks_failed.increment()
-                        fut.set_exception(
-                            ProcessError("Worker process died unexpectedly")
-                        )
+                        if not fut.done():
+                            try:
+                                fut.set_exception(
+                                    ProcessError(
+                                        "Worker process died unexpectedly"
+                                    )
+                                )
+                            except InvalidStateError:
+                                pass
                     except BaseException as e:
                         self._statistics.tasks_failed.increment()
                         logger.debug(f"Unexpected exception from worker: {e}")
-                        fut.set_exception(e)
+                        if not fut.done():
+                            try:
+                                fut.set_exception(e)
+                            except InvalidStateError:
+                                pass
                     else:
                         if isinstance(results, BaseException):
                             self._statistics.tasks_failed.increment()
-                            fut.set_exception(results)
+                            if not fut.done():
+                                try:
+                                    fut.set_exception(results)
+                                except InvalidStateError:
+                                    pass
                         else:
-                            fut.set_result(results)
+                            if not fut.done():
+                                try:
+                                    fut.set_result(results)
+                                except InvalidStateError:
+                                    pass
 
                         if isinstance(results, TimeoutError):
                             self._statistics.tasks_failed.increment()
