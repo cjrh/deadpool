@@ -560,9 +560,7 @@ class Deadpool(Executor):
                         if not fut.done():
                             try:
                                 fut.set_exception(
-                                    ProcessError(
-                                        "Worker process died unexpectedly"
-                                    )
+                                    ProcessError("Worker process died unexpectedly")
                                 )
                             except InvalidStateError:
                                 pass

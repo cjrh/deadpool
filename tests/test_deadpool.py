@@ -667,12 +667,11 @@ def test_set_exception_on_cancelled_future():
 
         assert fut.cancelled()
         invalid_state_errors = [
-            e for e in thread_exceptions
-            if isinstance(e.exc_value, InvalidStateError)
+            e for e in thread_exceptions if isinstance(e.exc_value, InvalidStateError)
         ]
-        assert not invalid_state_errors, (
-            f"InvalidStateError raised in background thread: {invalid_state_errors}"
-        )
+        assert (
+            not invalid_state_errors
+        ), f"InvalidStateError raised in background thread: {invalid_state_errors}"
     finally:
         threading.excepthook = original_hook
 
