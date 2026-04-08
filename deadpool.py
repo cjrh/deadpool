@@ -44,7 +44,7 @@ from functools import partial
 import psutil
 from setproctitle import setproctitle
 
-__version__ = "2026.3.2"
+__version__ = "2026.4.1"
 __all__ = [
     "Deadpool",
     "Future",
