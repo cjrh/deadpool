@@ -647,7 +647,9 @@ class Deadpool(Executor):
                         # it. If that's the case we'll do nothing. Otherwise, put
                         # an exception reporting the unexpected situation.
                         try:
-                            fut.set_exception(ProcessError(worker.format_death_message()))
+                            fut.set_exception(
+                                ProcessError(worker.format_death_message())
+                            )
                         except InvalidStateError:  # pragma: no cover
                             # We still have to catch this even though there is a
                             # check for `fut.done()`, simply due to an possible
