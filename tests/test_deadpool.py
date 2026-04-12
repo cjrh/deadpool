@@ -509,8 +509,14 @@ def test_kill(sig):
         exe.submit(k, 1)
         exe.submit(k, 1)
 
-        with pytest.raises(deadpool.ProcessError):
+        with pytest.raises(deadpool.ProcessError) as excinfo:
             f1.result()
+
+        # Issue #331: the signal that killed the worker should appear in
+        # the error message, not just "died unexpectedly".
+        msg = str(excinfo.value)
+        assert f"exitcode {-int(sig)}" in msg, msg
+        assert signal.strsignal(int(sig)) in msg, msg
 
         assert f2.result() == 1
 

@@ -203,6 +203,30 @@ class WorkerProcess:
     def is_alive(self):
         return self.process.is_alive()
 
+    def format_death_message(self, join_timeout: float = 1.0) -> str:
+        # When a worker is killed by a signal, the pipe often closes (giving
+        # an EOFError to the parent) a moment before the OS reaps the process
+        # and populates `exitcode`. Join briefly so the exitcode is available
+        # and we can report *which* signal killed the worker, rather than a
+        # generic "died unexpectedly". See issue #331.
+        proc = self.process
+        if proc.exitcode is None:
+            proc.join(timeout=join_timeout)
+
+        exitcode = proc.exitcode
+        if exitcode is None:
+            return "Worker process died unexpectedly"
+
+        try:
+            signame = signal.strsignal(-exitcode)
+        except (ValueError, TypeError):
+            signame = "Unknown"
+
+        return (
+            f"Subprocess {self.pid} completed unexpectedly with "
+            f"exitcode {exitcode} ({signame})"
+        )
+
     def results_are_available(self, block_for: float = 0.2):
         return self.connection_receive_msgs_from_process.poll(timeout=block_for)
 
@@ -560,7 +584,7 @@ class Deadpool(Executor):
                         if not fut.done():
                             try:
                                 fut.set_exception(
-                                    ProcessError("Worker process died unexpectedly")
+                                    ProcessError(worker.format_death_message())
                                 )
                             except InvalidStateError:
                                 pass
@@ -597,21 +621,12 @@ class Deadpool(Executor):
                 elif not worker.is_alive():
                     self._statistics.tasks_failed.increment()
                     logger.debug(f"p is no longer alive: {worker.process}")
-                    try:
-                        signame = signal.strsignal(-worker.process.exitcode)
-                    except (ValueError, TypeError):  # pragma: no cover
-                        signame = "Unknown"
-
                     if not fut.done():
                         # It is possible that fut has already had a result set on
                         # it. If that's the case we'll do nothing. Otherwise, put
                         # an exception reporting the unexpected situation.
-                        msg = (
-                            f"Subprocess {worker.pid} completed unexpectedly with "
-                            f"exitcode {worker.process.exitcode} ({signame})"
-                        )
                         try:
-                            fut.set_exception(ProcessError(msg))
+                            fut.set_exception(ProcessError(worker.format_death_message()))
                         except InvalidStateError:  # pragma: no cover
                             # We still have to catch this even though there is a
                             # check for `fut.done()`, simply due to an possible
