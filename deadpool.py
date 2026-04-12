@@ -203,12 +203,33 @@ class WorkerProcess:
     def is_alive(self):
         return self.process.is_alive()
 
-    def format_death_message(self, join_timeout: float = 1.0) -> str:
-        # When a worker is killed by a signal, the pipe often closes (giving
-        # an EOFError to the parent) a moment before the OS reaps the process
-        # and populates `exitcode`. Join briefly so the exitcode is available
-        # and we can report *which* signal killed the worker, rather than a
-        # generic "died unexpectedly". See issue #331.
+    def format_death_message(self, join_timeout: float = 0.1) -> str:
+        # When a worker dies from a signal, the parent sees EOF on the pipe
+        # before `exitcode` becomes non-None — so the obvious `exitcode` check
+        # right after EOFError reports None, and we lose the signal name.
+        # See issue #331.
+        #
+        # Ordering on Linux: `do_exit()` runs `__exit_files()` (closes the
+        # child's fds -> EOF on our pipe) *before* `exit_notify()` sets
+        # TASK_ZOMBIE and sends SIGCHLD. Only after the latter can
+        # `waitpid(pid, WNOHANG)` report a status, which is what populates
+        # `Process.exitcode` via `Popen.poll()`. The gap is typically
+        # microseconds but is unbounded under pathological load.
+        #
+        # `Process.join(timeout=X)` bridges the gap cleanly: it waits on the
+        # sentinel fd (closed in the same `__exit_files()` call, so already
+        # readable by the time we get here) and then calls blocking
+        # `waitpid(pid)`, returning as soon as the child reaches TASK_ZOMBIE.
+        # The timeout is a ceiling for pathological cases — and for the edge
+        # case where a worker closed its data pipe voluntarily without
+        # exiting, in which case we'd otherwise block until the timeout.
+        #
+        # Refs:
+        #   - cpython Lib/multiprocessing/popen_fork.py (Popen.wait/poll)
+        #   - cpython Lib/multiprocessing/process.py (Process.exitcode/join)
+        #   - Linux do_exit() ordering: __exit_files() precedes exit_notify()
+        #   - https://docs.python.org/3/library/multiprocessing.html
+        #     (Process.exitcode, Process.join semantics)
         proc = self.process
         if proc.exitcode is None:
             proc.join(timeout=join_timeout)
