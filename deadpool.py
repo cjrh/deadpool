@@ -203,6 +203,51 @@ class WorkerProcess:
     def is_alive(self):
         return self.process.is_alive()
 
+    def format_death_message(self, join_timeout: float = 0.1) -> str:
+        # When a worker dies from a signal, the parent sees EOF on the pipe
+        # before `exitcode` becomes non-None — so the obvious `exitcode` check
+        # right after EOFError reports None, and we lose the signal name.
+        # See issue #331.
+        #
+        # Ordering on Linux: `do_exit()` runs `__exit_files()` (closes the
+        # child's fds -> EOF on our pipe) *before* `exit_notify()` sets
+        # TASK_ZOMBIE and sends SIGCHLD. Only after the latter can
+        # `waitpid(pid, WNOHANG)` report a status, which is what populates
+        # `Process.exitcode` via `Popen.poll()`. The gap is typically
+        # microseconds but is unbounded under pathological load.
+        #
+        # `Process.join(timeout=X)` bridges the gap cleanly: it waits on the
+        # sentinel fd (closed in the same `__exit_files()` call, so already
+        # readable by the time we get here) and then calls blocking
+        # `waitpid(pid)`, returning as soon as the child reaches TASK_ZOMBIE.
+        # The timeout is a ceiling for pathological cases — and for the edge
+        # case where a worker closed its data pipe voluntarily without
+        # exiting, in which case we'd otherwise block until the timeout.
+        #
+        # Refs:
+        #   - cpython Lib/multiprocessing/popen_fork.py (Popen.wait/poll)
+        #   - cpython Lib/multiprocessing/process.py (Process.exitcode/join)
+        #   - Linux do_exit() ordering: __exit_files() precedes exit_notify()
+        #   - https://docs.python.org/3/library/multiprocessing.html
+        #     (Process.exitcode, Process.join semantics)
+        proc = self.process
+        if proc.exitcode is None:
+            proc.join(timeout=join_timeout)
+
+        exitcode = proc.exitcode
+        if exitcode is None:
+            return "Worker process died unexpectedly"
+
+        try:
+            signame = signal.strsignal(-exitcode)
+        except (ValueError, TypeError):
+            signame = "Unknown"
+
+        return (
+            f"Subprocess {self.pid} completed unexpectedly with "
+            f"exitcode {exitcode} ({signame})"
+        )
+
     def results_are_available(self, block_for: float = 0.2):
         return self.connection_receive_msgs_from_process.poll(timeout=block_for)
 
@@ -560,7 +605,7 @@ class Deadpool(Executor):
                         if not fut.done():
                             try:
                                 fut.set_exception(
-                                    ProcessError("Worker process died unexpectedly")
+                                    ProcessError(worker.format_death_message())
                                 )
                             except InvalidStateError:
                                 pass
@@ -597,21 +642,14 @@ class Deadpool(Executor):
                 elif not worker.is_alive():
                     self._statistics.tasks_failed.increment()
                     logger.debug(f"p is no longer alive: {worker.process}")
-                    try:
-                        signame = signal.strsignal(-worker.process.exitcode)
-                    except (ValueError, TypeError):  # pragma: no cover
-                        signame = "Unknown"
-
                     if not fut.done():
                         # It is possible that fut has already had a result set on
                         # it. If that's the case we'll do nothing. Otherwise, put
                         # an exception reporting the unexpected situation.
-                        msg = (
-                            f"Subprocess {worker.pid} completed unexpectedly with "
-                            f"exitcode {worker.process.exitcode} ({signame})"
-                        )
                         try:
-                            fut.set_exception(ProcessError(msg))
+                            fut.set_exception(
+                                ProcessError(worker.format_death_message())
+                            )
                         except InvalidStateError:  # pragma: no cover
                             # We still have to catch this even though there is a
                             # check for `fut.done()`, simply due to an possible
