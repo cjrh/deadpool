@@ -43,7 +43,7 @@ exclude = [".github/", ".gitignore"]
 
 [project.optional-dependencies]
 test = [
-    "pytest >= 7",
+    "pytest >= 9.0.3",
     "pytest-cov",
     "flake8",
     "coverage[toml]"
