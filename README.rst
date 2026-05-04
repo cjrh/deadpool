@@ -381,7 +381,7 @@ and other similar scenarios.
     with deadpool.Deadpool() as exe:
         fut = exe.submit(f, deadpool_timeout=1.0)
 
-        with pytest.raises(deadpool.TimeoutError)
+        with pytest.raises(deadpool.TimeoutError):
             fut.result()
 
 The parameter ``deadpool_timeout`` is special and consumed by ``Deadpool``
