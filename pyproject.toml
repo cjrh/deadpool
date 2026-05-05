@@ -7,6 +7,7 @@ name = "deadpool-executor"
 authors = [{name = "Caleb Hattingh", email = "caleb.hattingh@gmail.com"}]
 dynamic = ["version", "description"]
 readme = "README.rst"
+requires-python = ">=3.10"
 dependencies = [
     "psutil",
     "setproctitle",
@@ -17,7 +18,6 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Operating System :: POSIX :: Linux",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
