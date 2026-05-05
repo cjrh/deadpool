@@ -137,11 +137,17 @@ def test_stats_with_errors():
 
     assert results == [0.05] * 50
     print(f"{stats=}")
+    # ``worker_processes_created`` is at least max_workers (the initial
+    # pool fill), but can drift higher when the pool legitimately
+    # shrinks toward min_workers between bursts of submits (the
+    # main thread blocks on ``max_backlog`` while the runner drains
+    # ``submitted_jobs``) and then has to grow back when more tasks
+    # arrive. Pull it out and bound-check separately.
+    assert stats.pop("worker_processes_created") >= 10
     assert stats == {
         "tasks_received": 100,
         "tasks_launched": 100,
         "tasks_failed": 50,
-        "worker_processes_created": 10,
         "max_workers_busy_concurrently": 10,
         "worker_processes_still_alive": 5,
         "worker_processes_idle": 5,
