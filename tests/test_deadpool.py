@@ -4,7 +4,6 @@ import os
 import pickle
 import queue
 import signal
-import sys
 import time
 import multiprocessing as mp
 import threading
@@ -606,22 +605,8 @@ def raise_custom_exception(exc_class):
     [
         (MyBadException, MyBadException, "(1, 2, 3)"),
         (MyBadExceptionSetState, ValueError, "failed to unpickle"),
-        pytest.param(
-            MyBadExceptionReduce,
-            deadpool.ProcessError,
-            "pickling it failed",
-            marks=pytest.mark.skipif(
-                sys.version_info < (3, 10), reason="different message"
-            ),
-        ),
-        pytest.param(
-            MyBadExceptionReduceRaise,
-            deadpool.ProcessError,
-            "pickling it failed",
-            marks=pytest.mark.skipif(
-                sys.version_info < (3, 10), reason="different message"
-            ),
-        ),
+        (MyBadExceptionReduce, deadpool.ProcessError, "pickling it failed"),
+        (MyBadExceptionReduceRaise, deadpool.ProcessError, "pickling it failed"),
     ],
 )
 def test_bad_exception(logging_initializer, raises, exc_type, match):
