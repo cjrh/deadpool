@@ -394,9 +394,7 @@ class Deadpool(Executor):
         self._statistics = Statistics()
 
         # TODO: overcommit
-        self.workers: SimpleQueue[Union[WorkerProcess, _PendingWorker]] = (
-            SimpleQueue()
-        )
+        self.workers: SimpleQueue[Union[WorkerProcess, _PendingWorker]] = SimpleQueue()
         for _ in range(self.pool_size):
             self.add_worker_to_pool()
         # When a worker is running a job, it will be removed from
