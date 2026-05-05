@@ -37,7 +37,7 @@ from concurrent.futures import CancelledError, Executor, InvalidStateError, as_c
 from dataclasses import dataclass, field
 from multiprocessing.connection import Connection
 from queue import Empty, PriorityQueue, Queue, SimpleQueue
-from typing import Callable, Optional, Tuple
+from typing import Callable, Optional, Tuple, Union
 from collections.abc import Mapping
 from functools import partial
 
@@ -117,6 +117,22 @@ class Statistics:
 class PrioritizedItem:
     priority: int
     item: typing.Any = field(compare=False)
+
+
+class _PendingWorker:
+    # Placeholder enqueued when ``propagate_environ`` is set, so the
+    # ``dict(propagate_environ)`` snapshot is taken when the slot is
+    # consumed for a task — after the caller has had a chance to mutate
+    # ``os.environ`` for the next submit. Snapshotting eagerly inside
+    # ``done_with_process`` would race with the caller, leaving the
+    # replacement worker with stale env vars.
+    __slots__ = ("_pool",)
+
+    def __init__(self, pool: "Deadpool"):
+        self._pool = pool
+
+    def materialize(self) -> "WorkerProcess":
+        return self._pool._build_worker()
 
 
 @dataclass(init=False)
@@ -378,7 +394,9 @@ class Deadpool(Executor):
         self._statistics = Statistics()
 
         # TODO: overcommit
-        self.workers: SimpleQueue[WorkerProcess] = SimpleQueue()
+        self.workers: SimpleQueue[Union[WorkerProcess, _PendingWorker]] = (
+            SimpleQueue()
+        )
         for _ in range(self.pool_size):
             self.add_worker_to_pool()
         # When a worker is running a job, it will be removed from
@@ -408,16 +426,24 @@ class Deadpool(Executor):
         return stats
 
     def add_worker_to_pool(self):
+        worker = self._build_worker()
+        self.workers.put(worker)
+
+    def _replace_worker_slot(self):
+        # Called from ``done_with_process`` after a worker has been
+        # killed (e.g. ``max_tasks_per_child`` hit). When
+        # ``propagate_environ`` is set, defer the actual
+        # ``WorkerProcess`` construction so the
+        # ``dict(propagate_environ)`` snapshot is taken on the submit
+        # path, not here on the runner thread — which would otherwise
+        # race with the caller mutating ``os.environ`` between submits.
         if self.propagate_environ:
-            # By constructing here, late, we allow the user to make
-            # changes dynamically to the configured env vars and these
-            # will be reflected in the worker processes as they are
-            # added to the pool. This has a large number of interesting
-            # applications, such as dynamically changing the logging
-            # level of the worker processes, or changing the location
-            # of a file that the worker processes need to read, or
-            # changing timeouts and so on. All the user needs to do
-            # is update the value on the Deadpool instance itself.
+            self.workers.put(_PendingWorker(self))
+        else:
+            self.add_worker_to_pool()
+
+    def _build_worker(self) -> WorkerProcess:
+        if self.propagate_environ:
             initializer = partial(
                 initializer_environ_propagator,
                 dict(self.propagate_environ),
@@ -435,10 +461,10 @@ class Deadpool(Executor):
             daemon=self.daemon,
             malloc_trim_rss_memory_threshold_bytes=self.malloc_trim_rss_memory_threshold_bytes,
         )
-        self.workers.put(worker)
         self._statistics.worker_processes_created.increment()
         with self._workers_lock:
             self.existing_workers.add(worker)
+        return worker
 
     def clear_workers(self):
         """Clear all workers from the pool.
@@ -450,7 +476,8 @@ class Deadpool(Executor):
         """
         while not self.workers.empty():
             worker = self.workers.get()
-            worker.shutdown(wait=False)
+            if isinstance(worker, WorkerProcess):
+                worker.shutdown(wait=False)
 
     def runner(self):
         while True:
@@ -494,6 +521,8 @@ class Deadpool(Executor):
             self.add_worker_to_pool()
 
         wp = self.workers.get()
+        if isinstance(wp, _PendingWorker):
+            wp = wp.materialize()
         with self._workers_lock:
             self.busy_workers.add(wp)
             busy_count = len(self.busy_workers)
@@ -526,18 +555,18 @@ class Deadpool(Executor):
             return
 
         if not wp.is_alive():
-            self.add_worker_to_pool()
+            self._replace_worker_slot()
             return
 
         if not wp.ok:
-            self.add_worker_to_pool()
+            self._replace_worker_slot()
             return
 
         if self.max_tasks_per_child is not None:
             if wp.tasks_ran_counter >= self.max_tasks_per_child:
                 logger.debug(f"Worker {wp.pid} hit max tasks per child.")
                 wp.shutdown(wait=False)
-                self.add_worker_to_pool()
+                self._replace_worker_slot()
                 return
 
         if self.max_worker_memory_bytes is not None:
@@ -546,7 +575,7 @@ class Deadpool(Executor):
             if mem >= self.max_worker_memory_bytes:
                 logger.debug(f"Worker {wp.pid} hit max memory threshold.")
                 wp.shutdown(wait=False)
-                self.add_worker_to_pool()
+                self._replace_worker_slot()
                 return
 
         self.workers.put(wp)
@@ -754,7 +783,8 @@ class Deadpool(Executor):
         while not self.workers.empty():
             try:
                 worker = self.workers.get_nowait()
-                worker.shutdown()
+                if isinstance(worker, WorkerProcess):
+                    worker.shutdown()
             except Empty:  # pragma: no cover
                 break
 
