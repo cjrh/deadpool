@@ -28,6 +28,7 @@ import pickle
 import signal
 import sys
 import threading
+import time
 import traceback
 import typing
 import weakref
@@ -469,7 +470,7 @@ class Deadpool(Executor):
                 logger.debug("Got shutdown event, leaving runner.")
                 return
 
-            *_, fut = job
+            *_, fut, _ = job
             if fut.done():
                 # This shouldn't really be possible, but if the associated future
                 # for this job has somehow already been marked as done (e.g. if
@@ -551,7 +552,7 @@ class Deadpool(Executor):
 
         self.workers.put(wp)
 
-    def run_task(self, fn, args, kwargs, timeout, fut: Future):
+    def run_task(self, fn, args, kwargs, timeout, fut: Future, submit_ts: float):
         try:
             retry_count = 10
             while retry_count > 0:
@@ -690,10 +691,11 @@ class Deadpool(Executor):
             raise PoolClosed("The pool is closed. No more tasks can be submitted.")
 
         fut = Future()
+        submit_ts = time.monotonic()
         self.submitted_jobs.put(
             PrioritizedItem(
                 priority=deadpool_priority,
-                item=(fn, args, kwargs, deadpool_timeout, fut),
+                item=(fn, args, kwargs, deadpool_timeout, fut, submit_ts),
             )
         )
         self._statistics.tasks_received.increment()
@@ -788,7 +790,7 @@ def cancel_all_futures_on_queue(q: Queue):
             priority_item = q.get_nowait()
             q.task_done()
             job = priority_item.item
-            *_, fut = job
+            *_, fut, _ = job
             fut.cancel()
         except Empty:
             break

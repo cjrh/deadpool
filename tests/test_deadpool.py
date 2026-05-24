@@ -40,7 +40,9 @@ def test_cancel_all_futures():
     for i in range(3):
         fut = deadpool.Future()
         futs.append(fut)
-        pi = deadpool.PrioritizedItem(priority=0, item=(None, fut))
+        pi = deadpool.PrioritizedItem(
+            priority=0, item=(None, (), {}, None, fut, 0.0)
+        )
         q.put(pi)
 
     deadpool.cancel_all_futures_on_queue(q)
