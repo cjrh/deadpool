@@ -142,11 +142,17 @@ def test_stats_with_errors():
     assert results == [0.05] * 50
     print(f"{stats=}")
     assert isinstance(stats.pop("workers"), list)
+    # The pool can grow and shrink within [min_workers, max_workers] during
+    # the run, so worker_processes_created depends on scheduling. Under
+    # free-threaded Python the runner drains the backlog more aggressively
+    # and the shrink-when-idle path fires more often, producing a higher
+    # count. We assert the floor (at least max_workers were ever spawned)
+    # and leave the upper bound to scheduling.
+    assert stats.pop("worker_processes_created") >= 10
     assert stats == {
         "tasks_received": 100,
         "tasks_launched": 100,
         "tasks_failed": 50,
-        "worker_processes_created": 10,
         "max_workers_busy_concurrently": 10,
         "worker_processes_still_alive": 5,
         "worker_processes_idle": 5,
