@@ -105,7 +105,8 @@ def test_set_bounds_raises_max_no_immediate_change():
 
 def test_set_bounds_lowers_eventually_sheds_workers():
     """Lowering bounds doesn't kill workers eagerly; the existing
-    shrink-when-idle path sheds them as tasks complete."""
+    shrink-when-idle path sheds them one at a time as tasks complete
+    against an empty backlog."""
     with deadpool.Deadpool(max_workers=4, min_workers=4) as pool:
         # Force all 4 workers to exist by running 4 tasks.
         for f in [pool.submit(int, i) for i in range(4)]:
@@ -116,10 +117,17 @@ def test_set_bounds_lowers_eventually_sheds_workers():
 
         pool.set_bounds(min_workers=2, max_workers=2)
 
-        # Bounds are updated immediately; pool converges as tasks complete.
-        for f in [pool.submit(int, i) for i in range(8)]:
-            f.result(timeout=10)
-        time.sleep(0.2)
+        # Each task completed against an empty backlog gives
+        # done_with_process one shed opportunity. Submit serially and
+        # poll for convergence (up to 10s).
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            with pool._workers_lock:
+                alive = len(pool.existing_workers)
+            if alive == 2:
+                break
+            pool.submit(int, 0).result(timeout=10)
+            time.sleep(0.05)  # let done_with_process run
 
         with pool._workers_lock:
             alive = len(pool.existing_workers)
