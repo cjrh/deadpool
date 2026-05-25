@@ -46,3 +46,21 @@ def test_on_task_start_callback_exception_is_swallowed():
     with deadpool.Deadpool(max_workers=1, on_task_start=bad_hook) as pool:
         fut = pool.submit(_identity, 7)
         assert fut.result(timeout=10) == 7
+
+
+def test_worker_process_has_lifecycle_attrs():
+    """WorkerProcess exposes spawn_time, current_fn_name, draining."""
+    with deadpool.Deadpool(max_workers=1) as pool:
+        # Run one task so we know a worker exists.
+        pool.submit(_identity, 1).result(timeout=10)
+
+        # Reach into existing_workers to inspect.
+        with pool._workers_lock:
+            workers = list(pool.existing_workers)
+        assert len(workers) >= 1
+        wp = workers[0]
+        assert isinstance(wp.spawn_time, float)
+        assert wp.spawn_time > 0
+        assert wp.draining is False
+        # current_fn_name may be None (task finished) or a string mid-task.
+        assert wp.current_fn_name is None or isinstance(wp.current_fn_name, str)

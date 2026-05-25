@@ -133,6 +133,9 @@ class WorkerProcess:
     # to the OS.
     malloc_trim_rss_memory_threshold_bytes: Optional[int] = None
     ok: bool = True
+    spawn_time: float = 0.0
+    current_fn_name: Optional[str] = None
+    draining: bool = False
 
     def __init__(
         self,
@@ -169,6 +172,9 @@ class WorkerProcess:
         self.connection_send_msgs_to_process = conn_sender2
         self.tasks_ran_counter = 0
         self.ok = True
+        self.spawn_time = time.monotonic()
+        self.current_fn_name: Optional[str] = None
+        self.draining: bool = False
 
     def __hash__(self):
         return hash(self.process.pid)
