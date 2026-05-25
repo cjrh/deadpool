@@ -4,6 +4,8 @@ on_task_start, per-worker stats)."""
 import multiprocessing
 import time
 
+import pytest
+
 import deadpool
 
 
@@ -182,3 +184,45 @@ def test_drain_busy_workers_finish_first():
             drain_fut.result(timeout=10)
     finally:
         evt.set()
+
+
+def test_set_bounds_raises_max_no_immediate_change():
+    with deadpool.Deadpool(max_workers=2, min_workers=2) as pool:
+        pool.submit(_identity, 1).result(timeout=10)
+        result = pool.set_bounds(min_workers=2, max_workers=8)
+        assert result is None  # no shrink needed
+        # No new workers spawn yet — grow is on demand.
+
+
+def test_set_bounds_lowers_max_returns_future():
+    with deadpool.Deadpool(max_workers=4, min_workers=4) as pool:
+        # Force all 4 workers to exist.
+        futs = [pool.submit(_identity, i) for i in range(4)]
+        for f in futs:
+            f.result(timeout=10)
+        time.sleep(0.2)
+        with pool._workers_lock:
+            assert len(pool.existing_workers) == 4
+
+        fut = pool.set_bounds(min_workers=2, max_workers=2)
+        assert fut is not None
+        fut.result(timeout=10)
+
+        with pool._workers_lock:
+            alive = len(pool.existing_workers)
+        assert alive == 2
+
+
+def test_set_bounds_validation():
+    with deadpool.Deadpool(max_workers=2) as pool:
+        with pytest.raises(ValueError):
+            pool.set_bounds(min_workers=-1, max_workers=4)
+        with pytest.raises(ValueError):
+            pool.set_bounds(min_workers=5, max_workers=2)
+
+
+def test_set_bounds_after_shutdown_raises():
+    pool = deadpool.Deadpool(max_workers=2)
+    pool.shutdown(wait=True)
+    with pytest.raises(deadpool.PoolClosed):
+        pool.set_bounds(min_workers=1, max_workers=2)

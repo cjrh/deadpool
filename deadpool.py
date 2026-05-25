@@ -685,6 +685,42 @@ class Deadpool(Executor):
                 return
             time.sleep(0.1)
 
+    def set_bounds(
+        self,
+        min_workers: int,
+        max_workers: int,
+    ) -> Optional[concurrent.futures.Future]:
+        """Update worker bounds at runtime.
+
+        Raising max_workers takes effect on the next get_process call.
+        Lowering max_workers below the current alive worker count drains
+        the excess workers via the same shrink path used internally; the
+        returned Future resolves when all marked workers have exited.
+
+        Returns None when no shrink was needed.
+
+        Raises:
+            ValueError: min_workers < 0 or max_workers < min_workers.
+            PoolClosed: the pool has been shut down.
+        """
+        if min_workers < 0:
+            raise ValueError(f"min_workers must be >= 0, got {min_workers}")
+        if max_workers < min_workers:
+            raise ValueError(
+                f"max_workers ({max_workers}) must be >= min_workers ({min_workers})"
+            )
+        if self.closed:
+            raise PoolClosed("The pool is closed.")
+
+        with self._workers_lock:
+            self.min_workers = min_workers
+            self.pool_size = max_workers
+            alive = len(self.existing_workers)
+
+        if alive > max_workers:
+            return self.drain(alive - max_workers)
+        return None
+
     def run_task(self, fn, args, kwargs, timeout, fut: Future, submit_ts: float):
         worker: Optional[WorkerProcess] = None
         try:
