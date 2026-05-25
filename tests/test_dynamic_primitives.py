@@ -1,6 +1,8 @@
 """Tests for dynamic pool primitives (set_bounds, drain, try_submit,
 on_task_start, per-worker stats)."""
 
+import time
+
 import deadpool
 
 
@@ -116,3 +118,71 @@ def test_done_with_process_honors_draining_flag():
         with pool._workers_lock:
             alive_pids = [w.pid for w in pool.existing_workers]
         assert target_pid not in alive_pids
+
+
+import multiprocessing
+
+import concurrent.futures
+
+
+def _hold(evt):
+    """Worker function that blocks until the event is set."""
+    evt.wait(timeout=30)
+    return "done"
+
+
+def test_drain_idle_only():
+    """drain(n) with n <= idle drains idle workers without touching busy."""
+    with deadpool.Deadpool(max_workers=3, min_workers=3) as pool:
+        # Force all 3 workers to exist by running 3 tasks.
+        futs = [pool.submit(_identity, i) for i in range(3)]
+        for f in futs:
+            f.result(timeout=10)
+        time.sleep(0.2)  # let workers return to idle
+
+        with pool._workers_lock:
+            before_pids = {w.pid for w in pool.existing_workers}
+        assert len(before_pids) == 3
+
+        drain_fut = pool.drain(2)
+        drain_fut.result(timeout=10)
+
+        with pool._workers_lock:
+            after_pids = {w.pid for w in pool.existing_workers}
+        assert len(after_pids) == 1
+        assert after_pids.issubset(before_pids)
+
+
+def test_drain_more_than_alive():
+    """drain(n) with n > alive drains everyone, no error."""
+    with deadpool.Deadpool(max_workers=2, min_workers=2) as pool:
+        pool.submit(_identity, 1).result(timeout=10)
+        time.sleep(0.2)
+
+        drain_fut = pool.drain(99)
+        drain_fut.result(timeout=10)
+
+        with pool._workers_lock:
+            assert len(pool.existing_workers) == 0
+
+
+def test_drain_busy_workers_finish_first():
+    """drain on busy workers waits for the in-flight task to complete."""
+    evt = multiprocessing.Manager().Event()
+    try:
+        with deadpool.Deadpool(max_workers=2, min_workers=2) as pool:
+            # Saturate both workers.
+            f1 = pool.submit(_hold, evt)
+            f2 = pool.submit(_hold, evt)
+            # Give them a moment to start.
+            time.sleep(0.3)
+
+            drain_fut = pool.drain(2)
+            assert not drain_fut.done()  # workers still busy
+
+            evt.set()
+            f1.result(timeout=10)
+            f2.result(timeout=10)
+            drain_fut.result(timeout=10)
+    finally:
+        evt.set()

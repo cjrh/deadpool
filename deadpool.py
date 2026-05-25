@@ -603,6 +603,88 @@ class Deadpool(Executor):
 
         self.workers.put(wp)
 
+    def drain(
+        self,
+        n: int,
+        mode: str = "finish_current",
+    ) -> concurrent.futures.Future:
+        """Mark N workers no-new-tasks; resolve when they have exited.
+
+        Selection: idle workers first, then oldest-busy by spawn_time.
+        If n > alive_count, drains all alive workers.
+        """
+        if mode != "finish_current":
+            raise ValueError(f"Unsupported drain mode: {mode!r}")
+
+        with self._workers_lock:
+            candidates = self._select_drain_candidates(n)
+            for wp in candidates:
+                wp.draining = True
+
+        fut: concurrent.futures.Future = concurrent.futures.Future()
+        if not candidates:
+            fut.set_result(None)
+            return fut
+
+        t = threading.Thread(
+            target=self._watch_drain,
+            args=(candidates, fut),
+            name="deadpool.drain_watcher",
+            daemon=True,
+        )
+        t.start()
+        return fut
+
+    def _select_drain_candidates(self, n: int) -> list:
+        """Pick up to n workers for drain. Caller holds _workers_lock.
+
+        Returns a list of WorkerProcess instances. Idle workers are pulled
+        out of self.workers eagerly so get_process won't hand them out.
+        Busy workers are selected oldest-first by spawn_time.
+        """
+        selected: list = []
+
+        # Drain idle workers off the queue first.
+        while len(selected) < n:
+            try:
+                wp = self.workers.get_nowait()
+            except Empty:
+                break
+            selected.append(wp)
+
+        # If we still need more, take oldest-busy workers.
+        remaining = n - len(selected)
+        if remaining > 0:
+            busy_sorted = sorted(self.busy_workers, key=lambda w: w.spawn_time)
+            selected.extend(busy_sorted[:remaining])
+
+        return selected
+
+    def _watch_drain(
+        self,
+        candidates: list,
+        fut: concurrent.futures.Future,
+    ) -> None:
+        """Poll candidate workers until all have exited; resolve `fut`."""
+        # Eagerly shut down idle workers (they won't pass through
+        # done_with_process again).
+        for wp in candidates:
+            if wp not in self.busy_workers:
+                try:
+                    wp.shutdown(wait=False)
+                except Exception:
+                    logger.exception("Error shutting down draining idle worker")
+
+        while True:
+            if all(not wp.is_alive() for wp in candidates):
+                with self._workers_lock:
+                    for wp in candidates:
+                        self.existing_workers.discard(wp)
+                if not fut.done():
+                    fut.set_result(None)
+                return
+            time.sleep(0.1)
+
     def run_task(self, fn, args, kwargs, timeout, fut: Future, submit_ts: float):
         worker: Optional[WorkerProcess] = None
         try:
