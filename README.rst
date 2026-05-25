@@ -211,10 +211,9 @@ stdlib pool:
   drive pool sizing at runtime without the library knowing anything
   about scheduling policy. See `Dynamic primitives`_ below for a
   walkthrough. The set is: ``set_bounds(min, max)`` for mutable
-  bounds, ``drain(n)`` for a graceful per-N shrink, ``try_submit``
-  for non-blocking admission, the ``on_task_start`` constructor
-  callback for submit-to-start latency telemetry, and a ``workers``
-  list added to ``get_statistics()``.
+  bounds, ``try_submit`` for non-blocking admission, the
+  ``on_task_start`` constructor callback for submit-to-start latency
+  telemetry, and a ``workers`` list added to ``get_statistics()``.
 - ``Deadpool`` can propagate ``os.environ`` to the subprocesses.
   Normally, env vars present at the time of the "main" process will
   propagate to subprocesses, but dynamically modified env vars
@@ -438,12 +437,14 @@ uses the same shrink path that the existing adaptive logic uses.
 ``set_bounds(min_workers, max_workers)``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Updates the pool's bounds while it's running. Raising
-``max_workers`` takes effect on the next worker checkout (the pool
-grows on demand, same as at construction time). Lowering it below
-the current alive worker count returns a ``concurrent.futures.Future``
-that resolves when the excess workers have exited. Returns ``None``
-if no shrink was needed.
+Updates the pool's bounds while it's running. The pool already
+adapts within ``[min_workers, max_workers]`` (see `Minimum and
+Maximum Workers`_); ``set_bounds`` just moves those bounds at
+runtime. Raising ``max_workers`` lets future load create more
+workers on demand. Lowering ``min_workers`` lets the existing
+shrink-when-idle path shed workers as tasks complete - the pool
+converges over the next few task completions, no explicit drain
+or wait is needed.
 
 .. code-block:: python
 
@@ -453,40 +454,19 @@ if no shrink was needed.
         # ... submit work ...
 
         # External signal says "we're over-provisioned":
-        drain_fut = pool.set_bounds(min_workers=2, max_workers=4)
-        if drain_fut is not None:
-            drain_fut.result(timeout=30)  # wait for shrink to finish
+        pool.set_bounds(min_workers=2, max_workers=4)
+        # No-op now; as tasks complete, the pool will shed workers
+        # down to min_workers and never grow above max_workers.
 
         # External signal says "we need more headroom":
         pool.set_bounds(min_workers=4, max_workers=16)
-        # Returns None - new workers spawn on demand from get_process.
+        # New workers spawn on demand from get_process as the backlog
+        # fills.
 
 Validation raises ``ValueError`` for ``min_workers < 0`` or
 ``max_workers < min_workers``. Calling after ``shutdown()`` raises
-``PoolClosed``.
-
-``drain(n, mode="finish_current")``
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-Marks ``N`` workers no-new-tasks and returns a ``Future`` that
-resolves once they've all exited. Idle workers are picked first,
-then the oldest-busy by spawn time. If ``n`` exceeds the live
-worker count, every alive worker is drained (no error).
-
-.. code-block:: python
-
-    import deadpool
-
-    with deadpool.Deadpool(min_workers=4, max_workers=8) as pool:
-        # ... submit work ...
-
-        # Reload of an external config: drain 2 workers so the
-        # replacements pick up the new env on next get_process.
-        pool.drain(2).result(timeout=60)
-
-Busy workers exit only after their current task completes. If a
-task hangs, the returned ``Future`` will not resolve; pass a
-``timeout=`` to ``result()`` when you need a deadline.
+``PoolClosed``. If you need to observe convergence, poll
+``get_statistics()`` for ``worker_processes_still_alive``.
 
 ``try_submit(fn, *args, **kwargs)``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -552,7 +532,7 @@ In addition to the existing counters, ``get_statistics`` returns a
 
     {
         "pid": 12345,
-        "state": "idle",          # "idle" | "busy" | "draining"
+        "state": "idle",          # "idle" or "busy"
         "current_fn": None,       # qualified name when busy, None otherwise
         "tasks_done": 142,
         "age_s": 1834.0,

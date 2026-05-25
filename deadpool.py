@@ -135,7 +135,6 @@ class WorkerProcess:
     ok: bool = True
     spawn_time: float = 0.0
     current_fn_name: Optional[str] = None
-    draining: bool = False
 
     def __init__(
         self,
@@ -174,7 +173,6 @@ class WorkerProcess:
         self.ok = True
         self.spawn_time = time.monotonic()
         self.current_fn_name: Optional[str] = None
-        self.draining: bool = False
 
     def __hash__(self):
         return hash(self.process.pid)
@@ -428,12 +426,7 @@ class Deadpool(Executor):
 
         worker_details = []
         for wp in alive:
-            if wp.draining:
-                state = "draining"
-            elif wp in busy:
-                state = "busy"
-            else:
-                state = "idle"
+            state = "busy" if wp in busy else "idle"
             try:
                 rss = wp.get_rss_bytes()
             except Exception:
@@ -552,28 +545,17 @@ class Deadpool(Executor):
         # This worker is done with its job and is no longer busy.
         with self._workers_lock:
             self.busy_workers.remove(wp)
-            # Count busy workers that will stick around; draining ones are
-            # about to exit and must not be credited toward the "we have
-            # enough workers" decision below.
-            count_busy_keepers = sum(
-                1 for w in self.busy_workers if not w.draining
-            )
-
-        if wp.draining:
-            with self._workers_lock:
-                self.existing_workers.discard(wp)
-            wp.shutdown(wait=False)
-            return
+            count_workers_busy = len(self.busy_workers)
 
         count_workers_idle = self.workers.qsize()
         backlog_size = self.submitted_jobs.qsize()
 
-        # Workers that will remain if we shut down `wp`: surviving busy +
-        # idle. Compare to min_workers to decide if it is safe to shed `wp`.
-        survivors_if_wp_exits = count_busy_keepers + count_workers_idle
-        there_are_more_workers_than_min = survivors_if_wp_exits >= self.min_workers
+        # The `1` is for `wp` itself.
+        total_workers = count_workers_busy + count_workers_idle + 1
+        there_are_more_workers_than_min = total_workers > self.min_workers
         task_backlog_is_empty = backlog_size == 0
 
+        # if there_are_more_workers_than_min and (there_are_idle_workers or task_backlog_is_empty):
         if there_are_more_workers_than_min and task_backlog_is_empty:
             # We have more workers than the minimum, and there is no backlog of
             # tasks. This implies any tasks currently in play have already been picked
@@ -608,109 +590,19 @@ class Deadpool(Executor):
 
         self.workers.put(wp)
 
-    def drain(
-        self,
-        n: int,
-        mode: str = "finish_current",
-    ) -> concurrent.futures.Future:
-        """Mark N workers no-new-tasks; resolve when they have exited.
-
-        Selection: idle workers first, then oldest-busy by spawn_time.
-        If n > alive_count, drains all alive workers.
-
-        The returned Future resolves when every selected worker has
-        exited. Busy workers exit after their current task completes; if
-        a task hangs, the Future will not resolve - pass a timeout to
-        ``Future.result(timeout=...)`` if a deadline is required.
-        """
-        if mode != "finish_current":
-            raise ValueError(f"Unsupported drain mode: {mode!r}")
-
-        with self._workers_lock:
-            candidates = self._select_drain_candidates(n)
-            for wp in candidates:
-                wp.draining = True
-
-        fut: concurrent.futures.Future = concurrent.futures.Future()
-        if not candidates:
-            fut.set_result(None)
-            return fut
-
-        t = threading.Thread(
-            target=self._watch_drain,
-            args=(candidates, fut),
-            name="deadpool.drain_watcher",
-            daemon=True,
-        )
-        t.start()
-        return fut
-
-    def _select_drain_candidates(self, n: int) -> list:
-        """Pick up to n workers for drain. Caller holds _workers_lock.
-
-        Returns a list of WorkerProcess instances. Idle workers are pulled
-        out of self.workers eagerly so get_process won't hand them out.
-        Busy workers are selected oldest-first by spawn_time.
-        """
-        selected: list = []
-
-        # Drain idle workers off the queue first.
-        while len(selected) < n:
-            try:
-                wp = self.workers.get_nowait()
-            except Empty:
-                break
-            selected.append(wp)
-
-        # If we still need more, take oldest-busy workers.
-        remaining = n - len(selected)
-        if remaining > 0:
-            busy_sorted = sorted(self.busy_workers, key=lambda w: w.spawn_time)
-            selected.extend(busy_sorted[:remaining])
-
-        return selected
-
-    def _watch_drain(
-        self,
-        candidates: list,
-        fut: concurrent.futures.Future,
-    ) -> None:
-        """Poll candidate workers until all have exited; resolve `fut`."""
-        # Eagerly shut down idle workers (they won't pass through
-        # done_with_process again).
-        for wp in candidates:
-            if wp not in self.busy_workers:
-                try:
-                    wp.shutdown(wait=False)
-                except Exception:
-                    logger.exception("Error shutting down draining idle worker")
-
-        while True:
-            if all(not wp.is_alive() for wp in candidates):
-                with self._workers_lock:
-                    for wp in candidates:
-                        self.existing_workers.discard(wp)
-                if not fut.done():
-                    fut.set_result(None)
-                return
-            time.sleep(0.1)
-
-    def set_bounds(
-        self,
-        min_workers: int,
-        max_workers: int,
-    ) -> Optional[concurrent.futures.Future]:
+    def set_bounds(self, min_workers: int, max_workers: int) -> None:
         """Update worker bounds at runtime.
 
-        Raising max_workers takes effect on the next get_process call.
-        Lowering max_workers below the current alive worker count drains
-        the excess workers via the same shrink path used internally; the
-        returned Future resolves when all marked workers have exited.
-
-        Returns None when no shrink was needed.
+        The pool already adapts within ``[min_workers, max_workers]``:
+        ``get_process`` grows up to ``max_workers`` on demand, and
+        ``done_with_process`` sheds workers down to ``min_workers`` once
+        the backlog empties. ``set_bounds`` simply moves those bounds.
+        Raising ``max_workers`` lets future load create more workers;
+        lowering ``min_workers`` lets future task completions shed
+        workers naturally. The pool converges as tasks complete.
 
         Raises:
-            ValueError: min_workers < 0 or max_workers < min_workers.
+            ValueError: ``min_workers < 0`` or ``max_workers < min_workers``.
             PoolClosed: the pool has been shut down.
         """
         if min_workers < 0:
@@ -725,16 +617,6 @@ class Deadpool(Executor):
         with self._workers_lock:
             self.min_workers = min_workers
             self.pool_size = max_workers
-            # Only count workers that are not already draining; a previous
-            # set_bounds/drain may have left some in flight, and re-counting
-            # them would over-drain when set_bounds is called repeatedly.
-            non_draining = sum(
-                1 for w in self.existing_workers if not w.draining
-            )
-
-        if non_draining > max_workers:
-            return self.drain(non_draining - max_workers)
-        return None
 
     def run_task(self, fn, args, kwargs, timeout, fut: Future, submit_ts: float):
         worker: Optional[WorkerProcess] = None
