@@ -1,12 +1,12 @@
 import asyncio
 import logging
+import multiprocessing as mp
 import os
 import pickle
 import queue
 import signal
-import time
-import multiprocessing as mp
 import threading
+import time
 from concurrent.futures import CancelledError, InvalidStateError, as_completed
 from contextlib import contextmanager
 from functools import partial

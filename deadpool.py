@@ -19,8 +19,10 @@ worker process.
 
 """
 
+import atexit
 import concurrent.futures
 import ctypes
+import json
 import logging
 import multiprocessing as mp
 import os
@@ -32,15 +34,13 @@ import time
 import traceback
 import typing
 import weakref
-import atexit
-import json
+from collections.abc import Mapping
 from concurrent.futures import CancelledError, Executor, InvalidStateError, as_completed
 from dataclasses import dataclass, field
+from functools import partial
 from multiprocessing.connection import Connection
 from queue import Empty, Full, PriorityQueue, Queue, SimpleQueue
 from typing import Callable, Optional, Tuple
-from collections.abc import Mapping
-from functools import partial
 
 import psutil
 from setproctitle import setproctitle

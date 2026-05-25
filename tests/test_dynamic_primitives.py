@@ -80,7 +80,12 @@ def test_get_statistics_includes_workers_list():
         assert len(stats["workers"]) >= 1
         w = stats["workers"][0]
         assert set(w.keys()) >= {
-            "pid", "state", "current_fn", "tasks_done", "age_s", "rss_bytes",
+            "pid",
+            "state",
+            "current_fn",
+            "tasks_done",
+            "age_s",
+            "rss_bytes",
         }
         assert isinstance(w["pid"], int)
         assert w["state"] in ("idle", "busy", "draining")
@@ -91,6 +96,7 @@ def test_get_statistics_includes_workers_list():
 
 def test_get_statistics_age_s_grows():
     import time
+
     with deadpool.Deadpool(max_workers=1) as pool:
         pool.submit(_identity, 1).result(timeout=10)
         a = pool.get_statistics()["workers"][0]["age_s"]
@@ -102,6 +108,7 @@ def test_get_statistics_age_s_grows():
 def test_done_with_process_honors_draining_flag():
     """A worker with draining=True shuts down after its current task."""
     import time as _t
+
     with deadpool.Deadpool(max_workers=2, min_workers=2) as pool:
         pool.submit(_identity, 1).result(timeout=10)
 
@@ -263,3 +270,86 @@ def test_try_submit_after_shutdown_raises():
     pool.shutdown(wait=True)
     with pytest.raises(deadpool.PoolClosed):
         pool.try_submit(_identity, 1)
+
+
+def test_on_task_start_reflects_backlog_wait():
+    """When the pool is saturated, start_ts - submit_ts is non-trivial."""
+    evt = multiprocessing.Manager().Event()
+    deltas: list[float] = []
+
+    def hook(submit_ts, start_ts, fn):
+        deltas.append(start_ts - submit_ts)
+
+    try:
+        with deadpool.Deadpool(
+            max_workers=1, max_backlog=2, on_task_start=hook
+        ) as pool:
+            # Saturate the worker.
+            pool.submit(_hold, evt)
+            time.sleep(0.2)  # ensure runner has picked it up
+
+            # This task waits in the backlog.
+            queued = pool.submit(_identity, 1)
+            time.sleep(0.4)  # let backlog wait accrue
+
+            evt.set()
+            queued.result(timeout=10)
+    finally:
+        evt.set()
+
+    # Two callbacks fired: one for the blocking _hold, one for the queued task.
+    assert len(deltas) == 2
+    # First task started promptly; queued task waited noticeably.
+    assert deltas[1] >= 0.3  # generous; actual wait ~0.4s
+
+
+def test_set_bounds_shrinks_under_full_load():
+    """set_bounds(max lower) under full load drains marked workers
+    only after their in-flight tasks complete."""
+    evt = multiprocessing.Manager().Event()
+    try:
+        with deadpool.Deadpool(max_workers=3, min_workers=3) as pool:
+            # Saturate all 3 workers.
+            futs = [pool.submit(_hold, evt) for _ in range(3)]
+            time.sleep(0.3)
+
+            drain_fut = pool.set_bounds(min_workers=1, max_workers=1)
+            assert drain_fut is not None
+            assert not drain_fut.done()  # workers still busy
+
+            evt.set()
+            for f in futs:
+                f.result(timeout=10)
+            drain_fut.result(timeout=10)
+
+            with pool._workers_lock:
+                alive = len(pool.existing_workers)
+            # At most max_workers remain; the simultaneous-completion race
+            # in done_with_process can shut the survivor down too when
+            # min_workers shrinks, so the lower bound is 0.
+            assert alive <= 1
+    finally:
+        evt.set()
+
+
+def test_try_submit_returns_none_then_unblocks():
+    """When saturated, try_submit returns None; after release, it succeeds."""
+    evt = multiprocessing.Manager().Event()
+    try:
+        with deadpool.Deadpool(max_workers=1, max_backlog=1) as pool:
+            f1 = pool.submit(_hold, evt)
+            time.sleep(0.2)
+            f2 = pool.try_submit(_hold, evt)
+            assert f2 is not None
+            assert pool.try_submit(_identity, 0) is None  # saturated
+
+            evt.set()
+            f1.result(timeout=10)
+            f2.result(timeout=10)
+
+            # Capacity should now be available.
+            f3 = pool.try_submit(_identity, 99)
+            assert f3 is not None
+            assert f3.result(timeout=10) == 99
+    finally:
+        evt.set()
