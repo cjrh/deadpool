@@ -37,7 +37,7 @@ import json
 from concurrent.futures import CancelledError, Executor, InvalidStateError, as_completed
 from dataclasses import dataclass, field
 from multiprocessing.connection import Connection
-from queue import Empty, PriorityQueue, Queue, SimpleQueue
+from queue import Empty, Full, PriorityQueue, Queue, SimpleQueue
 from typing import Callable, Optional, Tuple
 from collections.abc import Mapping
 from functools import partial
@@ -876,6 +876,41 @@ class Deadpool(Executor):
                 item=(fn, args, kwargs, deadpool_timeout, fut, submit_ts),
             )
         )
+        self._statistics.tasks_received.increment()
+        return fut
+
+    def try_submit(
+        self,
+        fn: Callable,
+        /,
+        *args,
+        deadpool_timeout=None,
+        deadpool_priority=0,
+        **kwargs,
+    ) -> Optional[Future]:
+        """Like submit(), but returns None if the backlog queue is full
+        instead of blocking. Otherwise identical (priority, timeout, etc.).
+        """
+        if deadpool_priority < 0:
+            raise ValueError(
+                f"Parameter deadpool_priority must be >= 0, but was {deadpool_priority}"
+            )
+
+        if self.closed:
+            raise PoolClosed("The pool is closed. No more tasks can be submitted.")
+
+        fut = Future()
+        submit_ts = time.monotonic()
+        try:
+            self.submitted_jobs.put_nowait(
+                PrioritizedItem(
+                    priority=deadpool_priority,
+                    item=(fn, args, kwargs, deadpool_timeout, fut, submit_ts),
+                )
+            )
+        except Full:
+            return None
+
         self._statistics.tasks_received.increment()
         return fut
 

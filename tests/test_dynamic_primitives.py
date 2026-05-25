@@ -226,3 +226,40 @@ def test_set_bounds_after_shutdown_raises():
     pool.shutdown(wait=True)
     with pytest.raises(deadpool.PoolClosed):
         pool.set_bounds(min_workers=1, max_workers=2)
+
+
+def test_try_submit_returns_future_when_space():
+    with deadpool.Deadpool(max_workers=2, max_backlog=4) as pool:
+        fut = pool.try_submit(_identity, 99)
+        assert fut is not None
+        assert fut.result(timeout=10) == 99
+
+
+def test_try_submit_returns_none_when_saturated():
+    evt = multiprocessing.Manager().Event()
+    try:
+        with deadpool.Deadpool(max_workers=1, max_backlog=1) as pool:
+            # Worker takes one task that blocks.
+            f1 = pool.submit(_hold, evt)
+            # Let the runner pick it up so it actually occupies the worker.
+            time.sleep(0.2)
+            # Fill the one backlog slot.
+            f2 = pool.try_submit(_hold, evt)
+            assert f2 is not None
+
+            # Next attempt should find the backlog full.
+            f3 = pool.try_submit(_identity, 1)
+            assert f3 is None
+
+            evt.set()
+            f1.result(timeout=10)
+            f2.result(timeout=10)
+    finally:
+        evt.set()
+
+
+def test_try_submit_after_shutdown_raises():
+    pool = deadpool.Deadpool(max_workers=1)
+    pool.shutdown(wait=True)
+    with pytest.raises(deadpool.PoolClosed):
+        pool.try_submit(_identity, 1)
