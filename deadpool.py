@@ -335,6 +335,15 @@ class Deadpool(Executor):
             new worker processes as they are created. (The new parameters
             will not be seen by existing worker processes.)
 
+        :param on_task_start: Optional callback invoked once per submission
+            attempt with ``(submit_ts, start_ts, fn)`` immediately before the
+            task is sent to a worker. Both timestamps are ``time.monotonic()``
+            values. If a worker submission is retried (e.g. after a
+            ``BrokenPipeError`` against a dead worker), the callback fires
+            again for that retry - so a task may produce more than one
+            invocation. Exceptions raised by the callback are logged and
+            swallowed.
+
         """
         super().__init__()
 
