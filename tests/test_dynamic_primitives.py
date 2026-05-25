@@ -324,10 +324,7 @@ def test_set_bounds_shrinks_under_full_load():
 
             with pool._workers_lock:
                 alive = len(pool.existing_workers)
-            # At most max_workers remain; the simultaneous-completion race
-            # in done_with_process can shut the survivor down too when
-            # min_workers shrinks, so the lower bound is 0.
-            assert alive <= 1
+            assert alive == 1
     finally:
         evt.set()
 

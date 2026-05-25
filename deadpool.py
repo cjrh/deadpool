@@ -552,7 +552,12 @@ class Deadpool(Executor):
         # This worker is done with its job and is no longer busy.
         with self._workers_lock:
             self.busy_workers.remove(wp)
-            count_workers_busy = len(self.busy_workers)
+            # Count busy workers that will stick around; draining ones are
+            # about to exit and must not be credited toward the "we have
+            # enough workers" decision below.
+            count_busy_keepers = sum(
+                1 for w in self.busy_workers if not w.draining
+            )
 
         if wp.draining:
             with self._workers_lock:
@@ -563,12 +568,12 @@ class Deadpool(Executor):
         count_workers_idle = self.workers.qsize()
         backlog_size = self.submitted_jobs.qsize()
 
-        # The `1` is for `wp` itself.
-        total_workers = count_workers_busy + count_workers_idle + 1
-        there_are_more_workers_than_min = total_workers > self.min_workers
+        # Workers that will remain if we shut down `wp`: surviving busy +
+        # idle. Compare to min_workers to decide if it is safe to shed `wp`.
+        survivors_if_wp_exits = count_busy_keepers + count_workers_idle
+        there_are_more_workers_than_min = survivors_if_wp_exits >= self.min_workers
         task_backlog_is_empty = backlog_size == 0
 
-        # if there_are_more_workers_than_min and (there_are_idle_workers or task_backlog_is_empty):
         if there_are_more_workers_than_min and task_backlog_is_empty:
             # We have more workers than the minimum, and there is no backlog of
             # tasks. This implies any tasks currently in play have already been picked
