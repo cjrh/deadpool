@@ -314,6 +314,7 @@ class Deadpool(Executor):
         daemon=True,
         malloc_trim_rss_memory_threshold_bytes: Optional[int] = None,
         propagate_environ: Optional[Mapping] = None,
+        on_task_start: Optional[Callable[[float, float, Callable], None]] = None,
     ) -> None:
         """The pool.
 
@@ -347,6 +348,7 @@ class Deadpool(Executor):
         # for a very important reason, which you can read about in the
         # `add_worker_to_pool` method.
         self.propagate_environ = propagate_environ
+        self.on_task_start = on_task_start
         self.ctx = mp_context
         self.initializer = initializer
         self.initargs = initargs
@@ -559,6 +561,11 @@ class Deadpool(Executor):
                 retry_count -= 1
                 worker: WorkerProcess = self.get_process()
                 try:
+                    if self.on_task_start is not None:
+                        try:
+                            self.on_task_start(submit_ts, time.monotonic(), fn)
+                        except BaseException:
+                            logger.exception("on_task_start callback raised")
                     worker.submit_job((fn, args, kwargs, timeout))
                     break
                 except (pickle.PicklingError, AttributeError) as e:
