@@ -597,11 +597,12 @@ class Deadpool(Executor):
         self.workers.put(wp)
 
     def run_task(self, fn, args, kwargs, timeout, fut: Future, submit_ts: float):
+        worker: Optional[WorkerProcess] = None
         try:
             retry_count = 10
             while retry_count > 0:
                 retry_count -= 1
-                worker: WorkerProcess = self.get_process()
+                worker = self.get_process()
                 try:
                     worker.current_fn_name = getattr(fn, "__qualname__", repr(fn))
                     if self.on_task_start is not None:
@@ -713,7 +714,7 @@ class Deadpool(Executor):
 
             self.done_with_process(worker)
         finally:
-            if "worker" in locals():
+            if worker is not None:
                 worker.current_fn_name = None
             self.submitted_jobs.task_done()
 
