@@ -553,6 +553,13 @@ class Deadpool(Executor):
         with self._workers_lock:
             self.busy_workers.remove(wp)
             count_workers_busy = len(self.busy_workers)
+
+        if wp.draining:
+            with self._workers_lock:
+                self.existing_workers.discard(wp)
+            wp.shutdown(wait=False)
+            return
+
         count_workers_idle = self.workers.qsize()
         backlog_size = self.submitted_jobs.qsize()
 

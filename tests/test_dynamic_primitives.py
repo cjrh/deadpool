@@ -92,3 +92,27 @@ def test_get_statistics_age_s_grows():
         time.sleep(0.2)
         b = pool.get_statistics()["workers"][0]["age_s"]
         assert b > a
+
+
+def test_done_with_process_honors_draining_flag():
+    """A worker with draining=True shuts down after its current task."""
+    import time as _t
+    with deadpool.Deadpool(max_workers=2, min_workers=2) as pool:
+        pool.submit(_identity, 1).result(timeout=10)
+
+        # Pick one worker and mark it draining.
+        with pool._workers_lock:
+            workers = list(pool.existing_workers)
+        target = workers[0]
+        target_pid = target.pid
+        target.draining = True
+
+        # Run several tasks so the marked worker is exercised and released.
+        for _ in range(8):
+            pool.submit(_identity, 1).result(timeout=10)
+
+        # Give the shrink path a moment to run shutdown.
+        _t.sleep(0.2)
+        with pool._workers_lock:
+            alive_pids = [w.pid for w in pool.existing_workers]
+        assert target_pid not in alive_pids
