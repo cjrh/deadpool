@@ -64,3 +64,31 @@ def test_worker_process_has_lifecycle_attrs():
         assert wp.draining is False
         # current_fn_name may be None (task finished) or a string mid-task.
         assert wp.current_fn_name is None or isinstance(wp.current_fn_name, str)
+
+
+def test_get_statistics_includes_workers_list():
+    with deadpool.Deadpool(max_workers=2) as pool:
+        pool.submit(_identity, 1).result(timeout=10)
+        stats = pool.get_statistics()
+        assert "workers" in stats
+        assert isinstance(stats["workers"], list)
+        assert len(stats["workers"]) >= 1
+        w = stats["workers"][0]
+        assert set(w.keys()) >= {
+            "pid", "state", "current_fn", "tasks_done", "age_s", "rss_bytes",
+        }
+        assert isinstance(w["pid"], int)
+        assert w["state"] in ("idle", "busy", "draining")
+        assert isinstance(w["tasks_done"], int)
+        assert w["age_s"] >= 0
+        assert w["rss_bytes"] > 0
+
+
+def test_get_statistics_age_s_grows():
+    import time
+    with deadpool.Deadpool(max_workers=1) as pool:
+        pool.submit(_identity, 1).result(timeout=10)
+        a = pool.get_statistics()["workers"][0]["age_s"]
+        time.sleep(0.2)
+        b = pool.get_statistics()["workers"][0]["age_s"]
+        assert b > a

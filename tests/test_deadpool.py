@@ -72,6 +72,7 @@ def test_simple(malloc_threshold, daemon, min_workers):
     assert result == 0.05
     print(f"{stats=}")
 
+    assert isinstance(stats.pop("workers"), list)
     assert stats == {
         "tasks_received": 1,
         "tasks_launched": 1,
@@ -104,6 +105,7 @@ def test_stats():
 
     assert results == [0.05] * 6
     print(f"{stats=}")
+    assert isinstance(stats.pop("workers"), list)
     assert stats == {
         "tasks_received": 6,
         "tasks_launched": 6,
@@ -139,6 +141,7 @@ def test_stats_with_errors():
 
     assert results == [0.05] * 50
     print(f"{stats=}")
+    assert isinstance(stats.pop("workers"), list)
     assert stats == {
         "tasks_received": 100,
         "tasks_launched": 100,

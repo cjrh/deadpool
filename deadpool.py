@@ -416,12 +416,39 @@ class Deadpool(Executor):
     def get_statistics(self) -> dict[str, typing.Any]:
         stats = self._statistics.to_dict()
 
+        now = time.monotonic()
         # These are not counters; they are determined at the time of the
         # call based on the state of the worker processes.
         with self._workers_lock:
-            stats["worker_processes_still_alive"] = len(self.existing_workers)
-            stats["worker_processes_busy"] = len(self.busy_workers)
+            alive = list(self.existing_workers)
+            busy = set(self.busy_workers)
+            stats["worker_processes_still_alive"] = len(alive)
+            stats["worker_processes_busy"] = len(busy)
         stats["worker_processes_idle"] = self.workers.qsize()
+
+        worker_details = []
+        for wp in alive:
+            if wp.draining:
+                state = "draining"
+            elif wp in busy:
+                state = "busy"
+            else:
+                state = "idle"
+            try:
+                rss = wp.get_rss_bytes()
+            except Exception:
+                rss = 0  # process gone between snapshot and read
+            worker_details.append(
+                {
+                    "pid": wp.pid,
+                    "state": state,
+                    "current_fn": wp.current_fn_name,
+                    "tasks_done": wp.tasks_ran_counter,
+                    "age_s": now - wp.spawn_time,
+                    "rss_bytes": rss,
+                }
+            )
+        stats["workers"] = worker_details
 
         return stats
 
@@ -576,6 +603,7 @@ class Deadpool(Executor):
                 retry_count -= 1
                 worker: WorkerProcess = self.get_process()
                 try:
+                    worker.current_fn_name = getattr(fn, "__qualname__", repr(fn))
                     if self.on_task_start is not None:
                         try:
                             self.on_task_start(submit_ts, time.monotonic(), fn)
@@ -685,6 +713,8 @@ class Deadpool(Executor):
 
             self.done_with_process(worker)
         finally:
+            if "worker" in locals():
+                worker.current_fn_name = None
             self.submitted_jobs.task_done()
 
             if not fut.done():  # pragma: no cover
