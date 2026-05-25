@@ -1,6 +1,7 @@
 """Tests for dynamic pool primitives (set_bounds, drain, try_submit,
 on_task_start, per-worker stats)."""
 
+import multiprocessing
 import time
 
 import deadpool
@@ -118,11 +119,6 @@ def test_done_with_process_honors_draining_flag():
         with pool._workers_lock:
             alive_pids = [w.pid for w in pool.existing_workers]
         assert target_pid not in alive_pids
-
-
-import multiprocessing
-
-import concurrent.futures
 
 
 def _hold(evt):
