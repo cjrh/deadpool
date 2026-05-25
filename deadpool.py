@@ -617,6 +617,11 @@ class Deadpool(Executor):
 
         Selection: idle workers first, then oldest-busy by spawn_time.
         If n > alive_count, drains all alive workers.
+
+        The returned Future resolves when every selected worker has
+        exited. Busy workers exit after their current task completes; if
+        a task hangs, the Future will not resolve - pass a timeout to
+        ``Future.result(timeout=...)`` if a deadline is required.
         """
         if mode != "finish_current":
             raise ValueError(f"Unsupported drain mode: {mode!r}")
@@ -720,10 +725,15 @@ class Deadpool(Executor):
         with self._workers_lock:
             self.min_workers = min_workers
             self.pool_size = max_workers
-            alive = len(self.existing_workers)
+            # Only count workers that are not already draining; a previous
+            # set_bounds/drain may have left some in flight, and re-counting
+            # them would over-drain when set_bounds is called repeatedly.
+            non_draining = sum(
+                1 for w in self.existing_workers if not w.draining
+            )
 
-        if alive > max_workers:
-            return self.drain(alive - max_workers)
+        if non_draining > max_workers:
+            return self.drain(non_draining - max_workers)
         return None
 
     def run_task(self, fn, args, kwargs, timeout, fut: Future, submit_ts: float):

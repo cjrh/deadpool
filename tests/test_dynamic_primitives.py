@@ -220,6 +220,37 @@ def test_set_bounds_lowers_max_returns_future():
         assert alive == 2
 
 
+def test_set_bounds_repeated_under_load_does_not_overshoot():
+    """Rapid set_bounds calls during a drain must not over-drain.
+
+    Without the non-draining count, the second call would see all the
+    still-alive (but already draining) workers and mark even the survivor
+    for shutdown.
+    """
+    evt = multiprocessing.Manager().Event()
+    try:
+        with deadpool.Deadpool(max_workers=4, min_workers=4) as pool:
+            futs = [pool.submit(_hold, evt) for _ in range(4)]
+            time.sleep(0.3)
+
+            first = pool.set_bounds(min_workers=2, max_workers=2)
+            assert first is not None
+            # Second call before the first drain finishes.
+            second = pool.set_bounds(min_workers=2, max_workers=2)
+            assert second is None  # 2 non-draining already match max=2
+
+            evt.set()
+            for f in futs:
+                f.result(timeout=10)
+            first.result(timeout=10)
+
+            with pool._workers_lock:
+                alive = len(pool.existing_workers)
+            assert alive == 2
+    finally:
+        evt.set()
+
+
 def test_set_bounds_validation():
     with deadpool.Deadpool(max_workers=2) as pool:
         with pytest.raises(ValueError):
