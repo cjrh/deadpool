@@ -307,7 +307,7 @@ class Deadpool(Executor):
         initargs=(),
         finalizer=None,
         finalargs=(),
-        max_backlog=5,
+        max_backlog=1000,
         shutdown_wait: Optional[bool] = None,
         shutdown_cancel_futures: Optional[bool] = None,
         daemon=True,

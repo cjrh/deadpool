@@ -540,7 +540,7 @@ Below is the code.
 Controlling the backlog of submitted tasks
 ------------------------------------------
 
-By default, the ``max_backlog`` parameter is set to 5. This parameter is
+By default, the ``max_backlog`` parameter is set to 1000. This parameter is
 used to create the "submit queue" size. The submit queue is the place
 where submitted tasks are held before they are executed in background
 processes.
@@ -556,6 +556,18 @@ This kind of blocking is fine, and typically desired. It means that
 backpressure from blocking is controlling the amount of work in flight.
 By using a smaller ``max_backlog``, it means that you'll also be
 limiting the amount of memory in use during the execution of all the tasks.
+
+.. warning::
+
+    A blocking ``submit`` is dangerous if you call it from an asyncio
+    event loop thread, for example via ``loop.run_in_executor(...)``. If
+    the submit queue is full, the ``submit`` call will block the event
+    loop, stalling every other coroutine and task on that loop. This is
+    why the default ``max_backlog`` is deliberately large: with a high
+    value, ``submit`` is very unlikely to block in practice. If you are
+    *not* submitting from an event loop and you want backpressure (and
+    lower memory use), set ``max_backlog`` to a small value to make
+    ``submit`` block once the backlog is full.
 
 However, if you nevertheless still accumulate received futures as my
 example code above is doing, that accumulation, i.e., the list of futures,
