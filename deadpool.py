@@ -19,8 +19,10 @@ worker process.
 
 """
 
+import atexit
 import concurrent.futures
 import ctypes
+import json
 import logging
 import multiprocessing as mp
 import os
@@ -28,18 +30,17 @@ import pickle
 import signal
 import sys
 import threading
+import time
 import traceback
 import typing
 import weakref
-import atexit
-import json
+from collections.abc import Mapping
 from concurrent.futures import CancelledError, Executor, InvalidStateError, as_completed
 from dataclasses import dataclass, field
-from multiprocessing.connection import Connection
-from queue import Empty, PriorityQueue, Queue, SimpleQueue
-from typing import Callable, Optional, Tuple
-from collections.abc import Mapping
 from functools import partial
+from multiprocessing.connection import Connection
+from queue import Empty, Full, PriorityQueue, Queue, SimpleQueue
+from typing import Callable, Optional, Tuple
 
 import psutil
 from setproctitle import setproctitle
@@ -132,6 +133,8 @@ class WorkerProcess:
     # to the OS.
     malloc_trim_rss_memory_threshold_bytes: Optional[int] = None
     ok: bool = True
+    spawn_time: float = 0.0
+    current_fn_name: Optional[str] = None
 
     def __init__(
         self,
@@ -168,6 +171,8 @@ class WorkerProcess:
         self.connection_send_msgs_to_process = conn_sender2
         self.tasks_ran_counter = 0
         self.ok = True
+        self.spawn_time = time.monotonic()
+        self.current_fn_name: Optional[str] = None
 
     def __hash__(self):
         return hash(self.process.pid)
@@ -313,6 +318,7 @@ class Deadpool(Executor):
         daemon=True,
         malloc_trim_rss_memory_threshold_bytes: Optional[int] = None,
         propagate_environ: Optional[Mapping] = None,
+        on_task_start: Optional[Callable[[float, float, Callable], None]] = None,
     ) -> None:
         """The pool.
 
@@ -333,6 +339,15 @@ class Deadpool(Executor):
             new worker processes as they are created. (The new parameters
             will not be seen by existing worker processes.)
 
+        :param on_task_start: Optional callback invoked once per submission
+            attempt with ``(submit_ts, start_ts, fn)`` immediately before the
+            task is sent to a worker. Both timestamps are ``time.monotonic()``
+            values. If a worker submission is retried (e.g. after a
+            ``BrokenPipeError`` against a dead worker), the callback fires
+            again for that retry - so a task may produce more than one
+            invocation. Exceptions raised by the callback are logged and
+            swallowed.
+
         """
         super().__init__()
 
@@ -346,6 +361,7 @@ class Deadpool(Executor):
         # for a very important reason, which you can read about in the
         # `add_worker_to_pool` method.
         self.propagate_environ = propagate_environ
+        self.on_task_start = on_task_start
         self.ctx = mp_context
         self.initializer = initializer
         self.initargs = initargs
@@ -398,12 +414,34 @@ class Deadpool(Executor):
     def get_statistics(self) -> dict[str, typing.Any]:
         stats = self._statistics.to_dict()
 
+        now = time.monotonic()
         # These are not counters; they are determined at the time of the
         # call based on the state of the worker processes.
         with self._workers_lock:
-            stats["worker_processes_still_alive"] = len(self.existing_workers)
-            stats["worker_processes_busy"] = len(self.busy_workers)
+            alive = list(self.existing_workers)
+            busy = set(self.busy_workers)
+            stats["worker_processes_still_alive"] = len(alive)
+            stats["worker_processes_busy"] = len(busy)
         stats["worker_processes_idle"] = self.workers.qsize()
+
+        worker_details = []
+        for wp in alive:
+            state = "busy" if wp in busy else "idle"
+            try:
+                rss = wp.get_rss_bytes()
+            except Exception:
+                rss = 0  # process gone between snapshot and read
+            worker_details.append(
+                {
+                    "pid": wp.pid,
+                    "state": state,
+                    "current_fn": wp.current_fn_name,
+                    "tasks_done": wp.tasks_ran_counter,
+                    "age_s": now - wp.spawn_time,
+                    "rss_bytes": rss,
+                }
+            )
+        stats["workers"] = worker_details
 
         return stats
 
@@ -469,7 +507,7 @@ class Deadpool(Executor):
                 logger.debug("Got shutdown event, leaving runner.")
                 return
 
-            *_, fut = job
+            *_, fut, _ = job
             if fut.done():
                 # This shouldn't really be possible, but if the associated future
                 # for this job has somehow already been marked as done (e.g. if
@@ -508,6 +546,7 @@ class Deadpool(Executor):
         with self._workers_lock:
             self.busy_workers.remove(wp)
             count_workers_busy = len(self.busy_workers)
+
         count_workers_idle = self.workers.qsize()
         backlog_size = self.submitted_jobs.qsize()
 
@@ -551,13 +590,48 @@ class Deadpool(Executor):
 
         self.workers.put(wp)
 
-    def run_task(self, fn, args, kwargs, timeout, fut: Future):
+    def set_bounds(self, min_workers: int, max_workers: int) -> None:
+        """Update worker bounds at runtime.
+
+        The pool already adapts within ``[min_workers, max_workers]``:
+        ``get_process`` grows up to ``max_workers`` on demand, and
+        ``done_with_process`` sheds workers down to ``min_workers`` once
+        the backlog empties. ``set_bounds`` simply moves those bounds.
+        Raising ``max_workers`` lets future load create more workers;
+        lowering ``min_workers`` lets future task completions shed
+        workers naturally. The pool converges as tasks complete.
+
+        Raises:
+            ValueError: ``min_workers < 0`` or ``max_workers < min_workers``.
+            PoolClosed: the pool has been shut down.
+        """
+        if min_workers < 0:
+            raise ValueError(f"min_workers must be >= 0, got {min_workers}")
+        if max_workers < min_workers:
+            raise ValueError(
+                f"max_workers ({max_workers}) must be >= min_workers ({min_workers})"
+            )
+        if self.closed:
+            raise PoolClosed("The pool is closed.")
+
+        with self._workers_lock:
+            self.min_workers = min_workers
+            self.pool_size = max_workers
+
+    def run_task(self, fn, args, kwargs, timeout, fut: Future, submit_ts: float):
+        worker: Optional[WorkerProcess] = None
         try:
             retry_count = 10
             while retry_count > 0:
                 retry_count -= 1
-                worker: WorkerProcess = self.get_process()
+                worker = self.get_process()
                 try:
+                    worker.current_fn_name = getattr(fn, "__qualname__", repr(fn))
+                    if self.on_task_start is not None:
+                        try:
+                            self.on_task_start(submit_ts, time.monotonic(), fn)
+                        except BaseException:
+                            logger.exception("on_task_start callback raised")
                     worker.submit_job((fn, args, kwargs, timeout))
                     break
                 except (pickle.PicklingError, AttributeError) as e:
@@ -662,6 +736,8 @@ class Deadpool(Executor):
 
             self.done_with_process(worker)
         finally:
+            if worker is not None:
+                worker.current_fn_name = None
             self.submitted_jobs.task_done()
 
             if not fut.done():  # pragma: no cover
@@ -690,12 +766,48 @@ class Deadpool(Executor):
             raise PoolClosed("The pool is closed. No more tasks can be submitted.")
 
         fut = Future()
+        submit_ts = time.monotonic()
         self.submitted_jobs.put(
             PrioritizedItem(
                 priority=deadpool_priority,
-                item=(fn, args, kwargs, deadpool_timeout, fut),
+                item=(fn, args, kwargs, deadpool_timeout, fut, submit_ts),
             )
         )
+        self._statistics.tasks_received.increment()
+        return fut
+
+    def try_submit(
+        self,
+        fn: Callable,
+        /,
+        *args,
+        deadpool_timeout=None,
+        deadpool_priority=0,
+        **kwargs,
+    ) -> Optional[Future]:
+        """Like submit(), but returns None if the backlog queue is full
+        instead of blocking. Otherwise identical (priority, timeout, etc.).
+        """
+        if deadpool_priority < 0:
+            raise ValueError(
+                f"Parameter deadpool_priority must be >= 0, but was {deadpool_priority}"
+            )
+
+        if self.closed:
+            raise PoolClosed("The pool is closed. No more tasks can be submitted.")
+
+        fut = Future()
+        submit_ts = time.monotonic()
+        try:
+            self.submitted_jobs.put_nowait(
+                PrioritizedItem(
+                    priority=deadpool_priority,
+                    item=(fn, args, kwargs, deadpool_timeout, fut, submit_ts),
+                )
+            )
+        except Full:
+            return None
+
         self._statistics.tasks_received.increment()
         return fut
 
@@ -788,7 +900,7 @@ def cancel_all_futures_on_queue(q: Queue):
             priority_item = q.get_nowait()
             q.task_done()
             job = priority_item.item
-            *_, fut = job
+            *_, fut, _ = job
             fut.cancel()
         except Empty:
             break

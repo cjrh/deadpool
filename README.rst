@@ -206,6 +206,14 @@ stdlib pool:
   know or suspect there's a real memory leak somewhere in your code
   (or a 3rd-party package!), and the easiest way to deal with that
   right now is just to periodically remove a process.
+- ``Deadpool`` exposes a small set of *dynamic primitives* aimed at
+  external controllers (autoscalers, admission gates) that want to
+  drive pool sizing at runtime without the library knowing anything
+  about scheduling policy. See `Dynamic primitives`_ below for a
+  walkthrough. The set is: ``set_bounds(min, max)`` for mutable
+  bounds, ``try_submit`` for non-blocking admission, the
+  ``on_task_start`` constructor callback for submit-to-start latency
+  telemetry, and a ``workers`` list added to ``get_statistics()``.
 - ``Deadpool`` can propagate ``os.environ`` to the subprocesses.
   Normally, env vars present at the time of the "main" process will
   propagate to subprocesses, but dynamically modified env vars
@@ -414,6 +422,128 @@ much memory, this will not hurt the pool, and it will be able to receive and
 process more tasks. Note that this event will show up as a ``ProcessError``
 exception when accessing the future, so you have a way of at least tracking
 these events.
+
+Dynamic primitives
+------------------
+
+``Deadpool`` already grows and shrinks its worker pool within
+``[min_workers, max_workers]`` (see `Minimum and Maximum Workers`_).
+The following primitives expose the underlying mechanism so an
+external controller can drive sizing at runtime without the library
+caring about pressure, scheduling, or policy. They are designed to
+compose: ``set_bounds`` uses ``drain`` internally, ``drain``
+uses the same shrink path that the existing adaptive logic uses.
+
+``set_bounds(min_workers, max_workers)``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Updates the pool's bounds while it's running. The pool already
+adapts within ``[min_workers, max_workers]`` (see `Minimum and
+Maximum Workers`_); ``set_bounds`` just moves those bounds at
+runtime. Raising ``max_workers`` lets future load create more
+workers on demand. Lowering ``min_workers`` lets the existing
+shrink-when-idle path shed workers as tasks complete - the pool
+converges over the next few task completions, no explicit drain
+or wait is needed.
+
+.. code-block:: python
+
+    import deadpool
+
+    with deadpool.Deadpool(min_workers=2, max_workers=8) as pool:
+        # ... submit work ...
+
+        # External signal says "we're over-provisioned":
+        pool.set_bounds(min_workers=2, max_workers=4)
+        # No-op now; as tasks complete, the pool will shed workers
+        # down to min_workers and never grow above max_workers.
+
+        # External signal says "we need more headroom":
+        pool.set_bounds(min_workers=4, max_workers=16)
+        # New workers spawn on demand from get_process as the backlog
+        # fills.
+
+Validation raises ``ValueError`` for ``min_workers < 0`` or
+``max_workers < min_workers``. Calling after ``shutdown()`` raises
+``PoolClosed``. If you need to observe convergence, poll
+``get_statistics()`` for ``worker_processes_still_alive``.
+
+``try_submit(fn, *args, **kwargs)``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A non-blocking variant of ``submit``. Returns ``None`` immediately
+when the bounded backlog queue (sized by ``max_backlog``) is full,
+otherwise returns a ``Future`` exactly like ``submit``. Useful for
+admission control on hot paths where blocking the caller would
+hurt latency.
+
+.. code-block:: python
+
+    import deadpool
+
+    with deadpool.Deadpool(max_workers=4, max_backlog=16) as pool:
+        fut = pool.try_submit(my_work, payload)
+        if fut is None:
+            # Pool can't accept this right now - reject, queue elsewhere,
+            # or apply your own backpressure strategy.
+            handle_overflow(payload)
+        else:
+            result = fut.result()
+
+``submit`` keeps its existing blocking-when-full behaviour;
+``try_submit`` is a separate method so existing callers are
+unaffected.
+
+``on_task_start`` callback
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Constructor-time hook that fires once per submission attempt with
+``(submit_ts: float, start_ts: float, fn: Callable)`` immediately
+before a worker receives the task. Both timestamps are
+``time.monotonic()`` values, so ``start_ts - submit_ts`` is the
+queue-wait of that task. Exceptions raised by the callback are
+logged and swallowed; the runner thread is never disturbed.
+
+.. code-block:: python
+
+    import deadpool
+
+    def on_start(submit_ts, start_ts, fn):
+        wait_ms = (start_ts - submit_ts) * 1000
+        metrics.histogram("pool.queue_wait_ms", wait_ms,
+                          tags={"fn": fn.__qualname__})
+
+    with deadpool.Deadpool(max_workers=8, on_task_start=on_start) as pool:
+        pool.submit(my_work).result()
+
+The hook fires per *attempt*, so a task whose first worker
+submission hits a ``BrokenPipeError`` and retries will produce
+more than one invocation. If your downstream aggregation counts
+tasks rather than attempts, deduplicate by ``fn`` identity or by
+your own correlation id.
+
+Per-worker detail in ``get_statistics``
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+In addition to the existing counters, ``get_statistics`` returns a
+``workers`` list with one dict per live worker:
+
+.. code-block:: python
+
+    {
+        "pid": 12345,
+        "state": "idle",          # "idle" or "busy"
+        "current_fn": None,       # qualified name when busy, None otherwise
+        "tasks_done": 142,
+        "age_s": 1834.0,
+        "rss_bytes": 1_800_000_000,
+    }
+
+This makes it cheap to expose a "what is the pool actually doing
+right now?" snapshot in a diagnostics endpoint without correlating
+``ps`` output to deadpool's view of the world. ``rss_bytes`` is
+read from ``psutil`` per call; the snapshot is taken under the
+internal workers lock so the list is internally consistent.
 
 Design Details
 ==============

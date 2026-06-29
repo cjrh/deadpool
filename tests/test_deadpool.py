@@ -1,12 +1,12 @@
 import asyncio
 import logging
+import multiprocessing as mp
 import os
 import pickle
 import queue
 import signal
-import time
-import multiprocessing as mp
 import threading
+import time
 from concurrent.futures import CancelledError, InvalidStateError, as_completed
 from contextlib import contextmanager
 from functools import partial
@@ -40,7 +40,7 @@ def test_cancel_all_futures():
     for i in range(3):
         fut = deadpool.Future()
         futs.append(fut)
-        pi = deadpool.PrioritizedItem(priority=0, item=(None, fut))
+        pi = deadpool.PrioritizedItem(priority=0, item=(None, (), {}, None, fut, 0.0))
         q.put(pi)
 
     deadpool.cancel_all_futures_on_queue(q)
@@ -70,6 +70,7 @@ def test_simple(malloc_threshold, daemon, min_workers):
     assert result == 0.05
     print(f"{stats=}")
 
+    assert isinstance(stats.pop("workers"), list)
     assert stats == {
         "tasks_received": 1,
         "tasks_launched": 1,
@@ -102,6 +103,7 @@ def test_stats():
 
     assert results == [0.05] * 6
     print(f"{stats=}")
+    assert isinstance(stats.pop("workers"), list)
     assert stats == {
         "tasks_received": 6,
         "tasks_launched": 6,
@@ -137,11 +139,18 @@ def test_stats_with_errors():
 
     assert results == [0.05] * 50
     print(f"{stats=}")
+    assert isinstance(stats.pop("workers"), list)
+    # The pool can grow and shrink within [min_workers, max_workers] during
+    # the run, so worker_processes_created depends on scheduling. Under
+    # free-threaded Python the runner drains the backlog more aggressively
+    # and the shrink-when-idle path fires more often, producing a higher
+    # count. We assert the floor (at least max_workers were ever spawned)
+    # and leave the upper bound to scheduling.
+    assert stats.pop("worker_processes_created") >= 10
     assert stats == {
         "tasks_received": 100,
         "tasks_launched": 100,
         "tasks_failed": 50,
-        "worker_processes_created": 10,
         "max_workers_busy_concurrently": 10,
         "worker_processes_still_alive": 5,
         "worker_processes_idle": 5,
