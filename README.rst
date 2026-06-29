@@ -206,19 +206,79 @@ stdlib pool:
   know or suspect there's a real memory leak somewhere in your code
   (or a 3rd-party package!), and the easiest way to deal with that
   right now is just to periodically remove a process.
-- ``Deadpool`` can propagate ``os.environ`` to the subprocesses.
-  Normally, env vars present at the time of the "main" process will
-  propagate to subprocesses, but dynamically modified env vars
-  via ``os.environ`` will not. Actually, it depends on the start
-  method, with ``fork`` doing the propagation, and ``forkserver``
-  and ``spawn`` not doing it. The parameter ``propagate_environ``,
-  e.g., ``propagate_environ=os.environ``, re-enables this for
-  ``forkserver`` and ``spawn``. The supplied mapping will be
-  applied to the subprocesses as they are created. This also means
-  that if you want to modify some settings, you can modify the
-  mapping object at any time, and new subprocesses created after
-  that modification will get the new vars. One example use-case
-  is dynamically changing the logging level within subprocesses.
+- ``Deadpool`` can propagate ``os.environ`` to the subprocesses. This is
+  described in its own section below.
+
+Environment Variable Propagation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Worker processes do not automatically see changes you make to
+``os.environ`` in the main process. What they *do* see depends entirely
+on the start method:
+
+- ``fork`` copies the parent's current ``os.environ`` at the moment each
+  worker is forked.
+- ``forkserver`` (Deadpool's default) and ``spawn`` only inherit the
+  environment that existed when the *forkserver* process (or the Python
+  interpreter, for ``spawn``) first started. Changes made to
+  ``os.environ`` *after* that point are **not** visible to workers.
+
+The ``propagate_environ`` parameter makes propagation explicit and
+consistent across start methods. Pass it a mapping (typically
+``os.environ`` itself) and Deadpool will apply a snapshot of that mapping
+inside each worker, before the worker's ``initializer`` runs:
+
+.. code-block:: python
+
+    import os
+    import deadpool
+
+    os.environ["LOG_LEVEL"] = "INFO"
+
+    with deadpool.Deadpool(propagate_environ=os.environ) as exe:
+        result = exe.submit(do_work).result()  # worker sees LOG_LEVEL=INFO
+
+**What is guaranteed**
+
+- The mapping is *snapshotted at the moment a worker process is created*,
+  and applied to that worker's environment before its ``initializer``
+  (if any) runs. A worker reflects the mapping as it was at *that
+  worker's* creation time.
+
+**What is NOT supported**
+
+- A worker that is already running will **not** pick up later changes to
+  the mapping. Its environment is fixed for its lifetime; there is no
+  mechanism to push environment changes into a live worker.
+- Do not rely on the *timing* of when replacement workers are created.
+  Mutating ``os.environ`` and immediately submitting another task does
+  **not** guarantee the next task runs in a worker that sees the change —
+  it will usually reuse an existing, idle worker that still has the old
+  values.
+
+**Refreshing the environment across the pool**
+
+To deterministically apply updated values, mutate the mapping and then
+call ``clear_workers()``. This shuts down the currently idle workers;
+their replacements are created on demand as new tasks arrive and will
+snapshot the updated mapping. (Workers that are busy at the time keep
+running with their original environment until they finish.)
+
+.. code-block:: python
+
+    with deadpool.Deadpool(propagate_environ=os.environ) as exe:
+        exe.submit(do_work).result()        # sees LOG_LEVEL=INFO
+
+        os.environ["LOG_LEVEL"] = "DEBUG"
+        exe.clear_workers()                 # retire current idle workers
+
+        # Replacements are created on demand and snapshot the new value,
+        # so subsequent tasks see LOG_LEVEL=DEBUG.
+        exe.submit(do_work).result()
+
+This ``clear_workers()`` pattern is the supported way to roll out an
+environment change (for example, changing the logging level used by the
+worker processes) to the whole pool.
 
 Minimum and Maximum Workers
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~

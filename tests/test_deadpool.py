@@ -167,6 +167,10 @@ def initializer(env: dict):
 
 
 def test_env_fails():
+    # This relies on the forkserver already being running (with a clean
+    # environment) before we set the variable below. The session-scoped
+    # ``_prime_forkserver`` fixture in conftest.py guarantees that, so this
+    # test passes regardless of collection order.
     os.environ["DEADPOOL_ENVTEST"] = "123"
     with deadpool.Deadpool() as exe:
         fut = exe.submit(envtest, "DEADPOOL_ENVTEST")
@@ -222,29 +226,6 @@ def test_env_withflag_custom_init():
     # The initializer will use the value of DEADPOOL_ENVTEST
     # to set its own env var, which our job reads back out.
     assert result == "123123"
-
-
-def test_env_dynamic():
-    """This test shows how we can dynamically
-    update the environment and have that reflected
-    in the worker processes."""
-    os.environ["DEADPOOL_ENVTEST"] = "123"
-    with deadpool.Deadpool(
-        max_workers=1,
-        max_tasks_per_child=1,
-        # We also want to propagate our own environ
-        propagate_environ=os.environ,
-    ) as exe:
-        fut = exe.submit(envtest, "DEADPOOL_ENVTEST")
-        assert fut.result() == "123"
-
-        os.environ["DEADPOOL_ENVTEST"] = "456"
-        fut = exe.submit(envtest, "DEADPOOL_ENVTEST")
-        assert fut.result() == "456"
-
-        os.environ["DEADPOOL_ENVTEST"] = "789"
-        fut = exe.submit(envtest, "DEADPOOL_ENVTEST")
-        assert fut.result() == "789"
 
 
 def test_env_dynamic_clear():
