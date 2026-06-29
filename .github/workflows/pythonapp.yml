@@ -20,7 +20,7 @@ jobs:
     timeout-minutes: 5
     steps:
     - name: Harden Runner
-      uses: step-security/harden-runner@a5ad31d6a139d249332a2605b85202e8c0b78450
+      uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411
       with:
         egress-policy: block
         allowed-endpoints: >
@@ -33,10 +33,10 @@ jobs:
           release-assets.githubusercontent.com:443
 
     - name: "Checkout code"
-      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # tag=v3.0.0
+      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # tag=v3.0.0
 
     - name: Set up Python
-      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+      uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
       with:
         python-version: ${{ matrix.python-version }}
         architecture: x64
@@ -78,7 +78,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Harden the runner (Audit all outbound calls)
-      uses: step-security/harden-runner@a5ad31d6a139d249332a2605b85202e8c0b78450 # v2.19.1
+      uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
       with:
         egress-policy: audit
 

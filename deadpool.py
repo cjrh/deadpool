@@ -44,7 +44,7 @@ from functools import partial
 import psutil
 from setproctitle import setproctitle
 
-__version__ = "2026.4.1"
+__version__ = "2026.6.1"
 __all__ = [
     "Deadpool",
     "Future",
@@ -323,7 +323,7 @@ class Deadpool(Executor):
         initargs=(),
         finalizer=None,
         finalargs=(),
-        max_backlog=5,
+        max_backlog=1000,
         shutdown_wait: Optional[bool] = None,
         shutdown_cancel_futures: Optional[bool] = None,
         daemon=True,
