@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import os
 import socket
 import stat
@@ -101,7 +102,12 @@ def _bind_unix(config: UnixListener) -> BoundListener:
             except FileNotFoundError:
                 pass
             else:
-                _unlink_if_identity(path, current, (info.st_dev, info.st_ino))
+                if not _unlink_if_identity(path, current, (info.st_dev, info.st_ino)):
+                    raise OSError(
+                        errno.EADDRINUSE,
+                        os.strerror(errno.EADDRINUSE),
+                        str(path),
+                    )
         else:
             raise OSError(f"Unix socket is already live: {path}")
         finally:
@@ -136,14 +142,17 @@ def _bind_unix(config: UnixListener) -> BoundListener:
 
 def _unlink_if_identity(
     path: Path, current: os.stat_result, identity: tuple[int, int]
-) -> None:
-    """Compare identity immediately before unlinking a Unix listener path.
+) -> bool:
+    """Remove a Unix listener path only when it retains ``identity``.
 
-    This protects replacements visible to the final ``lstat``. A portable
-    ``lstat``/``unlink`` sequence still has an unavoidable TOCTOU window.
+    Returns whether the path was removed. This protects replacements visible
+    to the final ``lstat``; a portable ``lstat``/``unlink`` still has an
+    unavoidable TOCTOU window.
     """
-    if (current.st_dev, current.st_ino) == identity:
-        path.unlink()
+    if (current.st_dev, current.st_ino) != identity:
+        return False
+    path.unlink()
+    return True
 
 
 def _validate_unix_directory(path) -> None:
