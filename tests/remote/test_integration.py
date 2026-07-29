@@ -133,9 +133,7 @@ def test_duplicate_live_client_instance_is_rejected(remote_pair, monkeypatch):
         {"max_chunks": 128},
     ],
 )
-def test_handshake_rejects_asymmetric_wire_limits(
-    tmp_path, server_limit_changes
-):
+def test_handshake_rejects_asymmetric_wire_limits(tmp_path, server_limit_changes):
     socket_path = tmp_path / "pool.sock"
     server = DeadpoolServer(
         partial(deadpool.Deadpool, max_workers=1, mp_context="forkserver"),
@@ -486,6 +484,7 @@ def test_callback_registration_does_not_wait_for_dispatch_capacity(tmp_path):
 
         def register_callbacks() -> None:
             try:
+
                 def blocking_callback(_) -> None:
                     callback_order.append(0)
                     callback_started.set()

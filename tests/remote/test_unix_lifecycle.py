@@ -234,10 +234,7 @@ def test_shutdown_during_startup_cleans_unpublished_resources(
         assert pool_created.wait(5)
         shutdown_thread.start()
         deadline = time.monotonic() + 2
-        while (
-            server.state is not ServerState.STOPPING
-            and time.monotonic() < deadline
-        ):
+        while server.state is not ServerState.STOPPING and time.monotonic() < deadline:
             time.sleep(0.005)
         assert server.state is ServerState.STOPPING
         assert not shutdown_complete.wait(0.05)

@@ -8,7 +8,6 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-
 _INSECURE_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost"})
 
 

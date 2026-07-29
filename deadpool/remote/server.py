@@ -947,9 +947,7 @@ class DeadpoolServer:
                     len(outcome.payload),
                     self.limits,
                 )
-                self._terminal_locked(
-                    record, state, kind, descriptor, outcome.payload
-                )
+                self._terminal_locked(record, state, kind, descriptor, outcome.payload)
             elif isinstance(outcome, TimeoutError):
                 self._terminal_locked(
                     record,
@@ -1411,9 +1409,7 @@ def _fit_terminal_descriptor(
             middle = (low + high) // 2
             candidate = _truncate_utf8(original, middle)
             bounded[name] = candidate
-            if _terminal_descriptor_fits(
-                request_id, bounded, payload_size, limits
-            ):
+            if _terminal_descriptor_fits(request_id, bounded, payload_size, limits):
                 best = candidate
                 low = middle + 1
             else:
