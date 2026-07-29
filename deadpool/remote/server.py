@@ -30,6 +30,7 @@ from ._protocol import (
     _validate_wire_limits,
     _wire_limits,
     send_message,
+    validate_message_control,
 )
 from ._scheduler import FairScheduler
 from ._transport import (
@@ -940,8 +941,14 @@ class DeadpoolServer:
                     ),
                 }
                 state, kind = mapping[outcome.kind]
+                descriptor = _fit_terminal_descriptor(
+                    record.request_id,
+                    outcome.descriptor or {},
+                    len(outcome.payload),
+                    self.limits,
+                )
                 self._terminal_locked(
-                    record, state, kind, outcome.descriptor or {}, outcome.payload
+                    record, state, kind, descriptor, outcome.payload
                 )
             elif isinstance(outcome, TimeoutError):
                 self._terminal_locked(
@@ -1370,6 +1377,79 @@ class DeadpoolServer:
     def __exit__(self, exc_type, exc, traceback) -> bool:
         self.shutdown()
         return False
+
+
+def _fit_terminal_descriptor(
+    request_id: str,
+    descriptor: dict,
+    payload_size: int,
+    limits: RemoteLimits,
+) -> dict:
+    """Retain as much diagnostic text as the complete wire frame can carry."""
+    fields = ("module", "type", "message", "serialization_error", "traceback")
+    bounded = {
+        name: _truncate_utf8(str(descriptor[name]), limits.max_metadata_bytes)
+        for name in fields
+        if name in descriptor
+    }
+    if _terminal_descriptor_fits(request_id, bounded, payload_size, limits):
+        return bounded
+
+    # Remove least-essential/largest fields first. Once removal makes the
+    # frame valid, restore the largest prefix which still fits exactly.
+    for name in ("traceback", "serialization_error", "message", "type", "module"):
+        if name not in bounded:
+            continue
+        original = bounded[name]
+        bounded[name] = ""
+        if not _terminal_descriptor_fits(request_id, bounded, payload_size, limits):
+            continue
+        low = 0
+        high = len(original.encode("utf-8"))
+        best = ""
+        while low <= high:
+            middle = (low + high) // 2
+            candidate = _truncate_utf8(original, middle)
+            bounded[name] = candidate
+            if _terminal_descriptor_fits(
+                request_id, bounded, payload_size, limits
+            ):
+                best = candidate
+                low = middle + 1
+            else:
+                high = middle - 1
+        bounded[name] = best
+        return bounded
+
+    # A successful handshake is larger than this minimal terminal control, but
+    # omit optional descriptor keys defensively if a custom bound is extreme.
+    return {}
+
+
+def _terminal_descriptor_fits(
+    request_id: str,
+    descriptor: dict,
+    payload_size: int,
+    limits: RemoteLimits,
+) -> bool:
+    try:
+        validate_message_control(
+            {"request_id": request_id, **descriptor}, payload_size, limits
+        )
+    except RemoteProtocolError:
+        return False
+    return True
+
+
+def _truncate_utf8(value: str, limit: int) -> str:
+    encoded = value.encode("utf-8", errors="backslashreplace")
+    if len(encoded) <= limit:
+        return encoded.decode("utf-8")
+    marker = b"...[truncated]"
+    if limit <= len(marker):
+        return marker[:limit].decode("ascii")
+    prefix = encoded[: limit - len(marker)].decode("utf-8", errors="ignore")
+    return prefix + marker.decode("ascii")
 
 
 def _validate_shutdown_deadline(value: object) -> float | None:

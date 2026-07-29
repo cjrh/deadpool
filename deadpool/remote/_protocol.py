@@ -173,6 +173,58 @@ def validate_control(control: dict, limits: RemoteLimits) -> None:
     _json_dumps(control, limits)
 
 
+def validate_message_control(
+    control: dict, payload_size: int, limits: RemoteLimits
+) -> None:
+    """Validate control data inside its complete first-frame envelope."""
+    count = _message_chunk_count(payload_size, limits)
+    _encode_frame_control(
+        "0" * 32,
+        index=0,
+        count=count,
+        total=payload_size,
+        digest="0" * 64,
+        control=control,
+        limits=limits,
+    )
+
+
+def _message_chunk_count(payload_size: int, limits: RemoteLimits) -> int:
+    if payload_size < 0 or payload_size > limits.max_message_bytes:
+        raise RemoteProtocolError("message payload exceeds configured limit")
+    count = max(
+        1,
+        (payload_size + limits.max_frame_payload_bytes - 1)
+        // limits.max_frame_payload_bytes,
+    )
+    if count > limits.max_chunks:
+        raise RemoteProtocolError("message requires too many chunks")
+    return count
+
+
+def _encode_frame_control(
+    message_id: str,
+    *,
+    index: int,
+    count: int,
+    total: int,
+    digest: str,
+    control: dict | None,
+    limits: RemoteLimits,
+) -> bytes:
+    return _json_dumps(
+        {
+            "message_id": message_id,
+            "index": index,
+            "count": count,
+            "total": total,
+            "digest": digest,
+            "control": control,
+        },
+        limits,
+    )
+
+
 def send_message(
     sock: socket.socket,
     message: Message,
@@ -180,26 +232,22 @@ def send_message(
 ) -> None:
     """Send one logical message as one or more independently bounded frames."""
     payload = memoryview(message.payload)
-    if len(payload) > limits.max_message_bytes:
-        raise RemoteProtocolError("message payload exceeds configured limit")
     frame_size = limits.max_frame_payload_bytes
-    count = max(1, (len(payload) + frame_size - 1) // frame_size)
-    if count > limits.max_chunks:
-        raise RemoteProtocolError("message requires too many chunks")
+    count = _message_chunk_count(len(payload), limits)
     message_id = uuid.uuid4().hex
     digest = hashlib.sha256(payload).hexdigest()
     for index in range(count):
         start = index * frame_size
         chunk = payload[start : start + frame_size]
-        frame_control = {
-            "message_id": message_id,
-            "index": index,
-            "count": count,
-            "total": len(payload),
-            "digest": digest,
-            "control": message.control if index == 0 else None,
-        }
-        control = _json_dumps(frame_control, limits)
+        control = _encode_frame_control(
+            message_id,
+            index=index,
+            count=count,
+            total=len(payload),
+            digest=digest,
+            control=message.control if index == 0 else None,
+            limits=limits,
+        )
         prefix = _PREFIX.pack(
             MAGIC,
             MAJOR,

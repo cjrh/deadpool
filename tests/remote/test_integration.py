@@ -45,6 +45,14 @@ def fail_value_error():
     raise ValueError("remote boom")
 
 
+def fail_large_value_error():
+    raise ValueError("task exploded: " + "\x00" * 20_000)
+
+
+def large_encoding_failure_result():
+    return "trigger-large-encoding-failure"
+
+
 def unencodable_result():
     return lambda: None
 
@@ -237,6 +245,42 @@ class SlowSerializer(PickleSerializer):
     def dumps(self, value, *, limit):
         time.sleep(0.1)
         return super().dumps(value, limit=limit)
+
+
+class LargeEncodingFailureSerializer(PickleSerializer):
+    def dumps(self, value, *, limit):
+        if value == "trigger-large-encoding-failure":
+            raise ValueError("encoding exploded: " + "\x00" * 20_000)
+        return super().dumps(value, limit=limit)
+
+
+def test_large_error_descriptors_do_not_disconnect_session(tmp_path):
+    socket_path = tmp_path / "pool.sock"
+    serializer = LargeEncodingFailureSerializer()
+    limits = RemoteLimits(max_control_bytes=4096, max_metadata_bytes=1024)
+    server = DeadpoolServer(
+        partial(deadpool.Deadpool, max_workers=2, mp_context="forkserver"),
+        listeners=[UnixListener(socket_path)],
+        serializer=serializer,
+        limits=limits,
+    ).start()
+    client = DeadpoolClient(
+        UnixAddress(socket_path), serializer=serializer, limits=limits
+    )
+    try:
+        task_failure = client.submit(fail_large_value_error)
+        encoding_failure = client.submit(large_encoding_failure_result)
+        unrelated = client.submit(delayed, "healthy", 0.05)
+
+        with pytest.raises(ValueError, match="task exploded"):
+            task_failure.result(timeout=5)
+        with pytest.raises(RemoteResultEncodingError, match="encoding exploded"):
+            encoding_failure.result(timeout=5)
+        assert unrelated.result(timeout=5) == "healthy"
+        assert client.check_health()
+    finally:
+        client.shutdown(cancel_futures=True)
+        server.shutdown(cancel_futures=True, deadline=5)
 
 
 def test_failed_result_decode_is_not_acknowledged(tmp_path):

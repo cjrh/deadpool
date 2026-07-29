@@ -54,12 +54,7 @@ def execute_opaque(
     except BaseException as error:
         return WorkerOutcome(
             "result_encoding_failed",
-            descriptor={
-                "module": type(error).__module__,
-                "type": type(error).__qualname__,
-                "message": _safe_repr(error),
-                "traceback": "".join(traceback.format_exception(error)),
-            },
+            descriptor=_describe_exception(error),
         )
     return WorkerOutcome("result", payload)
 
