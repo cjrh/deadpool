@@ -102,7 +102,7 @@ class TcpListener:
 
 @dataclass(frozen=True, slots=True)
 class RemoteLimits:
-    """Finite defaults bound every user-controlled queue and byte buffer."""
+    """Finite defaults bound protocol/resource queues and byte buffers."""
 
     max_control_bytes: int = 64 * 1024
     max_frame_payload_bytes: int = 1024 * 1024
@@ -125,6 +125,7 @@ class RemoteLimits:
     max_staged_tasks: int = 128
     outbound_queue_size: int = 1024
     inbound_queue_size: int = 1024
+    # Bounds callback batches waiting to start; registration itself is nonblocking.
     callback_queue_size: int = 1024
     completion_workers: int = 4
     control_timeout: float = 5.0

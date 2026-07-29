@@ -123,11 +123,13 @@ class DeadpoolClient(concurrent.futures.Executor):
         self._serialization_slots = threading.BoundedSemaphore(
             self.limits.outbound_queue_size
         )
+        self._callback_dispatcher: threading.Thread | None = None
         self.server_id: str | None = None
         self.server_epoch: str | None = None
         self.session_id: str | None = None
         self.negotiated_limits: dict = {}
         self._connect()
+        self._start_callback_dispatcher()
 
     def _connect(self) -> None:
         try:
@@ -681,33 +683,47 @@ class DeadpoolClient(concurrent.futures.Executor):
         with self._lock:
             self._futures.pop(future.request_id, None)
 
-    def _reserve_callback(self) -> None:
-        self._callback_slots.acquire()
+    def _start_callback_dispatcher(self) -> None:
+        self._callback_dispatch_queue = queue.SimpleQueue()
+        self._callback_dispatch_closed = False
+        self._callback_dispatcher = threading.Thread(
+            target=self._callback_dispatcher_loop,
+            name="deadpool.remote.callback-dispatcher",
+            daemon=True,
+        )
+        self._callback_dispatcher.start()
+
+    def _callback_dispatcher_loop(self) -> None:
+        while True:
+            item = self._callback_dispatch_queue.get()
+            if item is None:
+                return
+            callbacks, future = item
+            # Registration stays stdlib-compatible and nonblocking. Capacity
+            # is acquired here, outside transport and completion-state lanes.
+            self._callback_slots.acquire()
+            try:
+                self._callback_executor.submit(
+                    _run_callback_batch,
+                    self._callback_slots,
+                    callbacks,
+                    future,
+                )
+            except RuntimeError:
+                self._callback_slots.release()
+                for callback in callbacks:
+                    _call_callback(callback, future)
 
     def _schedule_callback(self, callback, future: RemoteFuture) -> None:
-        try:
-            self._callback_executor.submit(
-                _run_reserved_callback,
-                self._callback_slots,
-                callback,
-                future,
-            )
-        except RuntimeError:
-            self._callback_slots.release()
-            _call_callback(callback, future)
+        self._schedule_callbacks([callback], future)
 
     def _schedule_callbacks(self, callbacks: list, future: RemoteFuture) -> None:
-        try:
-            self._callback_executor.submit(
-                _run_callbacks,
-                self._callback_slots,
-                callbacks,
-                future,
-            )
-        except RuntimeError:
-            for callback in callbacks:
-                self._callback_slots.release()
-                _call_callback(callback, future)
+        with self._lock:
+            if not self._callback_dispatch_closed:
+                self._callback_dispatch_queue.put((callbacks, future))
+                return
+        for callback in callbacks:
+            _call_callback(callback, future)
 
     def _ensure_process(self) -> None:
         if os.getpid() == self._owner_pid:
@@ -753,6 +769,7 @@ class DeadpoolClient(concurrent.futures.Executor):
             self.limits.outbound_queue_size
         )
         self._connect()
+        self._start_callback_dispatcher()
 
     def shutdown(self, wait: bool = True, *, cancel_futures: bool = False) -> None:
         self._ensure_process()
@@ -811,6 +828,9 @@ class DeadpoolClient(concurrent.futures.Executor):
             self._completion_slots,
             self.limits.inbound_queue_size,
         )
+        with self._lock:
+            self._callback_dispatch_closed = True
+            self._callback_dispatch_queue.put(None)
         self._completion_executor.shutdown(wait=False)
         self._serialization_executor.shutdown(wait=False)
         self._callback_executor.shutdown(wait=False)
@@ -881,23 +901,14 @@ def _run_bounded(semaphore, function, args: tuple, kwargs: dict) -> None:
         semaphore.release()
 
 
-def _run_callbacks(
+def _run_callback_batch(
     semaphore: threading.BoundedSemaphore,
     callbacks: list,
     future: RemoteFuture,
 ) -> None:
-    for callback in callbacks:
-        semaphore.release()
-        _call_callback(callback, future)
-
-
-def _run_reserved_callback(
-    semaphore: threading.BoundedSemaphore,
-    callback,
-    future: RemoteFuture,
-) -> None:
     semaphore.release()
-    _call_callback(callback, future)
+    for callback in callbacks:
+        _call_callback(callback, future)
 
 
 def _call_callback(callback, future: RemoteFuture) -> None:

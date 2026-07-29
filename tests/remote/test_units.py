@@ -109,9 +109,6 @@ class CallbackClient:
     def __init__(self):
         self.cancel_calls = 0
 
-    def _reserve_callback(self):
-        return None
-
     def _schedule_callbacks(self, callbacks, future):
         for callback in callbacks:
             callback(future)

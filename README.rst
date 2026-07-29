@@ -813,6 +813,11 @@ Client and server wire bounds for control data, frames, messages, metadata, and
 chunk counts must match. The handshake rejects asymmetric wire limits before
 accepting submissions.
 
+``RemoteFuture.add_done_callback()`` follows the standard nonblocking
+registration contract. ``callback_queue_size`` bounds callback batches admitted
+to the callback executor, not application-owned registrations waiting for
+dispatch; callback backpressure never blocks transport or Future state updates.
+
 .. warning::
 
    The default pickle callable mode is remote code execution by design. TLS

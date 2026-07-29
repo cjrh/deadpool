@@ -30,6 +30,7 @@ from deadpool.remote._protocol import (
     send_message,
 )
 from deadpool.remote.serializer import PickleSerializer
+from tests.remote.tasks import wait_then_mark
 
 
 def add(left, right):
@@ -454,6 +455,93 @@ def test_callback_capacity_one_allows_reentrant_registration(tmp_path):
         assert future.result(timeout=5) == 5
         assert finished.wait(2)
     finally:
+        client.shutdown(cancel_futures=True)
+        server.shutdown(cancel_futures=True, deadline=5)
+
+
+def test_callback_registration_does_not_wait_for_dispatch_capacity(tmp_path):
+    socket_path = tmp_path / "pool.sock"
+    limits = RemoteLimits(callback_queue_size=1, completion_workers=1)
+    server = DeadpoolServer(
+        partial(deadpool.Deadpool, max_workers=1, mp_context="forkserver"),
+        listeners=[UnixListener(socket_path)],
+    ).start()
+    client = DeadpoolClient(UnixAddress(socket_path), limits=limits)
+    release = tmp_path / "release"
+    marker = tmp_path / "marker"
+    registration_finished = threading.Event()
+    callback_started = threading.Event()
+    callback_release = threading.Event()
+    second_callback_finished = threading.Event()
+    third_callback_finished = threading.Event()
+    registration_errors = []
+    callback_order = []
+    registration_thread = None
+    try:
+        future = client.submit(wait_then_mark, release, marker, "done")
+        deadline = time.monotonic() + 2
+        while not future.running() and time.monotonic() < deadline:
+            time.sleep(0.005)
+        assert future.running()
+
+        def register_callbacks() -> None:
+            try:
+                def blocking_callback(_) -> None:
+                    callback_order.append(0)
+                    callback_started.set()
+                    callback_release.wait(5)
+
+                future.add_done_callback(blocking_callback)
+                for index in (1, 2):
+                    future.add_done_callback(
+                        lambda _, index=index: callback_order.append(index)
+                    )
+            except BaseException as error:
+                registration_errors.append(error)
+            finally:
+                registration_finished.set()
+
+        registration_thread = threading.Thread(target=register_callbacks)
+        registration_thread.start()
+        assert registration_finished.wait(1)
+        assert registration_errors == []
+
+        release.touch()
+        assert future.result(timeout=5) == "done"
+        assert callback_started.wait(2)
+
+        second = client.submit(add, 2, 3)
+        second.add_done_callback(lambda _: second_callback_finished.set())
+        assert second.result(timeout=5) == 5
+        deadline = time.monotonic() + 2
+        capacity_exhausted = False
+        while time.monotonic() < deadline:
+            if client._callback_slots.acquire(blocking=False):
+                client._callback_slots.release()
+                time.sleep(0.005)
+            else:
+                capacity_exhausted = True
+                break
+        assert capacity_exhausted
+
+        third = client.submit(add, 3, 4)
+        third.add_done_callback(lambda _: third_callback_finished.set())
+        assert third.result(timeout=5) == 7
+        assert client.submit(add, 20, 22).result(timeout=5) == 42
+        assert client.check_health()
+
+        callback_release.set()
+        assert second_callback_finished.wait(2)
+        assert third_callback_finished.wait(2)
+        deadline = time.monotonic() + 2
+        while len(callback_order) < 3 and time.monotonic() < deadline:
+            time.sleep(0.005)
+        assert callback_order == [0, 1, 2]
+    finally:
+        release.touch(exist_ok=True)
+        callback_release.set()
+        if registration_thread is not None:
+            registration_thread.join(5)
         client.shutdown(cancel_futures=True)
         server.shutdown(cancel_futures=True, deadline=5)
 

@@ -38,7 +38,7 @@ class RemoteFuture(concurrent.futures.Future):
         self._owner_pid = os.getpid()
         self._client = weakref.ref(client)
         self._state_lock = threading.RLock()
-        self._remote_callbacks: list[tuple[object, bool]] = []
+        self._remote_callbacks: list[object] = []
 
     @property
     def pid(self) -> int | None:
@@ -69,15 +69,11 @@ class RemoteFuture(concurrent.futures.Future):
 
     def add_done_callback(self, fn) -> None:
         self._check_process()
-        client = self._client()
-        reserved = client is not None
-        if client is not None:
-            client._reserve_callback()
         with self._state_lock:
             if not self.done():
-                self._remote_callbacks.append((fn, reserved))
+                self._remote_callbacks.append(fn)
                 return
-        self._schedule_callback(fn, reserved)
+        self._schedule_callback(fn)
 
     def result(self, timeout: float | None = None):
         self._check_process()
@@ -164,18 +160,15 @@ class RemoteFuture(concurrent.futures.Future):
         if not callbacks:
             return
         client = self._client()
-        if client is not None and all(reserved for _, reserved in callbacks):
-            client._schedule_callbacks(
-                [callback for callback, _ in callbacks],
-                self,
-            )
+        if client is None:
+            for callback in callbacks:
+                callback(self)
             return
-        for callback, reserved in callbacks:
-            self._schedule_callback(callback, reserved)
+        client._schedule_callbacks(callbacks, self)
 
-    def _schedule_callback(self, callback, reserved: bool) -> None:
+    def _schedule_callback(self, callback) -> None:
         client = self._client()
-        if client is None or not reserved:
+        if client is None:
             callback(self)
         else:
             client._schedule_callback(callback, self)
