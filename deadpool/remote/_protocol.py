@@ -27,6 +27,26 @@ MAJOR = 1
 MINOR = 0
 _PREFIX = struct.Struct("!4sBBBBII")
 _FLAG_CHUNKED = 1
+_WIRE_LIMIT_FIELDS = (
+    "max_control_bytes",
+    "max_frame_payload_bytes",
+    "max_message_bytes",
+    "max_metadata_bytes",
+    "max_chunks",
+)
+
+
+def _wire_limits(limits: RemoteLimits) -> dict[str, int]:
+    return {name: getattr(limits, name) for name in _WIRE_LIMIT_FIELDS}
+
+
+def _validate_wire_limits(value: object) -> dict[str, int]:
+    if not isinstance(value, dict) or set(value) != set(_WIRE_LIMIT_FIELDS):
+        raise RemoteProtocolError("wire limits have invalid fields")
+    for name, limit in value.items():
+        if isinstance(limit, bool) or not isinstance(limit, int) or limit <= 0:
+            raise RemoteProtocolError(f"wire limit {name} must be a positive integer")
+    return dict(value)
 
 
 class MessageType(IntEnum):

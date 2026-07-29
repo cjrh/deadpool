@@ -21,7 +21,16 @@ from typing import Callable
 from deadpool import Future as LocalFuture
 from deadpool import ProcessError, TimeoutError
 
-from ._protocol import MAJOR, MINOR, Message, MessageReader, MessageType, send_message
+from ._protocol import (
+    MAJOR,
+    MINOR,
+    Message,
+    MessageReader,
+    MessageType,
+    _validate_wire_limits,
+    _wire_limits,
+    send_message,
+)
 from ._scheduler import FairScheduler
 from ._transport import (
     BoundListener,
@@ -496,6 +505,12 @@ class DeadpoolServer:
 
     def _handshake(self, connection: _ServerConnection, hello: dict) -> None:
         _validate_hello(hello)
+        if hello["wire_limits"] != _wire_limits(self.limits):
+            connection.send(
+                MessageType.HANDSHAKE_REJECTED,
+                {"reason": "wire_limits"},
+            )
+            raise RemoteProtocolError("wire limit compatibility rejected")
         if [MAJOR, MINOR] not in hello["versions"]:
             connection.send(MessageType.HANDSHAKE_REJECTED, {"reason": "protocol"})
             raise RemoteProtocolError("no compatible protocol version")
@@ -603,6 +618,7 @@ class DeadpoolServer:
                 "version": [MAJOR, MINOR],
                 "features": ["callable", "registered", "chunking"],
                 "wire": "experimental-deadpool-private-v1",
+                "wire_limits": _wire_limits(self.limits),
                 "server_id": self.server_id,
                 "epoch": self.epoch,
                 "session_id": session_id,
@@ -1379,6 +1395,7 @@ def _validate_hello(hello: dict) -> None:
         "capabilities",
         "max_result_bytes",
         "wire",
+        "wire_limits",
     }
     if not required <= set(hello):
         raise RemoteProtocolError("HELLO is missing required fields")
@@ -1421,6 +1438,7 @@ def _validate_hello(hello: dict) -> None:
         serializer_protocol, (str, int)
     ):
         raise RemoteProtocolError("HELLO serializer protocol is invalid")
+    _validate_wire_limits(hello["wire_limits"])
     result_limit = hello["max_result_bytes"]
     if (
         isinstance(result_limit, bool)

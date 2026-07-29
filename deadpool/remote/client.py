@@ -25,6 +25,8 @@ from ._protocol import (
     Message,
     MessageReader,
     MessageType,
+    _validate_wire_limits,
+    _wire_limits,
     send_message,
     validate_control,
 )
@@ -146,6 +148,7 @@ class DeadpoolClient(concurrent.futures.Executor):
                 "registry_fingerprint": self.registry_fingerprint,
                 "authentication": self.authenticator() if self.authenticator else None,
                 "max_result_bytes": self.limits.max_result_bytes,
+                "wire_limits": _wire_limits(self.limits),
             }
             send_message(sock, Message(MessageType.HELLO, hello), self.limits)
             reader = MessageReader(self.limits)
@@ -167,6 +170,13 @@ class DeadpoolClient(concurrent.futures.Executor):
                 raise RemoteCompatibilityError(
                     "server selected an incompatible wire protocol"
                 )
+            server_wire_limits = _validate_wire_limits(
+                response.control.get("wire_limits")
+            )
+            if server_wire_limits != _wire_limits(self.limits):
+                raise RemoteCompatibilityError(
+                    "server selected incompatible wire limits"
+                )
             sock.settimeout(None)
         except RemoteExecutorError:
             try:
@@ -186,7 +196,10 @@ class DeadpoolClient(concurrent.futures.Executor):
             self.server_id = response.control.get("server_id")
             self.server_epoch = response.control.get("epoch")
             self.session_id = response.control.get("session_id")
-            self.negotiated_limits = dict(response.control.get("limits") or {})
+            self.negotiated_limits = {
+                **dict(response.control.get("limits") or {}),
+                **server_wire_limits,
+            }
             self._transport_failed = False
         threading.Thread(
             target=self._sender_loop, name="deadpool.remote.sender", daemon=True

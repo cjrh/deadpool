@@ -809,6 +809,10 @@ opt-in (``TcpListener("127.0.0.1", port, insecure=True)``); other deployments
 must supply configured server and client ``ssl.SSLContext`` objects. Mutual TLS
 is recommended.
 
+Client and server wire bounds for control data, frames, messages, metadata, and
+chunk counts must match. The handshake rejects asymmetric wire limits before
+accepting submissions.
+
 .. warning::
 
    The default pickle callable mode is remote code execution by design. TLS

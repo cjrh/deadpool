@@ -22,7 +22,13 @@ from deadpool.remote import (
     UnixAddress,
     UnixListener,
 )
-from deadpool.remote._protocol import MessageType
+from deadpool.remote._protocol import (
+    Message,
+    MessageReader,
+    MessageType,
+    _wire_limits,
+    send_message,
+)
 from deadpool.remote.serializer import PickleSerializer
 
 
@@ -106,6 +112,76 @@ def test_duplicate_live_client_instance_is_rejected(remote_pair, monkeypatch):
     )
     with pytest.raises(RemoteCompatibilityError):
         DeadpoolClient(UnixAddress(server.bound_addresses[0]))
+
+
+@pytest.mark.parametrize(
+    "server_limit_changes",
+    [
+        {"max_control_bytes": 32 * 1024},
+        {"max_frame_payload_bytes": 512 * 1024},
+        {"max_message_bytes": 128 * 1024 * 1024},
+        {"max_metadata_bytes": 8 * 1024},
+        {"max_chunks": 128},
+    ],
+)
+def test_handshake_rejects_asymmetric_wire_limits(
+    tmp_path, server_limit_changes
+):
+    socket_path = tmp_path / "pool.sock"
+    server = DeadpoolServer(
+        partial(deadpool.Deadpool, max_workers=1, mp_context="forkserver"),
+        listeners=[UnixListener(socket_path)],
+        limits=RemoteLimits(**server_limit_changes),
+    ).start()
+    try:
+        with pytest.raises(RemoteCompatibilityError, match="wire_limits"):
+            DeadpoolClient(UnixAddress(socket_path))
+    finally:
+        server.shutdown(cancel_futures=True, deadline=5)
+
+
+def test_client_rejects_server_selected_asymmetric_wire_limits(tmp_path):
+    socket_path = tmp_path / "pool.sock"
+    limits = RemoteLimits()
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    listener.bind(str(socket_path))
+    listener.listen()
+    listener.settimeout(5)
+    server_errors = []
+
+    def serve_incompatible_welcome() -> None:
+        try:
+            connection, _ = listener.accept()
+            with connection:
+                MessageReader(limits).receive(connection)
+                selected = _wire_limits(limits)
+                selected["max_chunks"] -= 1
+                send_message(
+                    connection,
+                    Message(
+                        MessageType.WELCOME,
+                        {
+                            "wire": "experimental-deadpool-private-v1",
+                            "wire_limits": selected,
+                        },
+                    ),
+                    limits,
+                )
+        except BaseException as error:
+            server_errors.append(error)
+
+    server_thread = threading.Thread(target=serve_incompatible_welcome)
+    server_thread.start()
+    try:
+        with pytest.raises(RemoteCompatibilityError, match="wire limits"):
+            DeadpoolClient(UnixAddress(socket_path))
+    finally:
+        listener.close()
+        server_thread.join(5)
+        socket_path.unlink(missing_ok=True)
+
+    assert not server_thread.is_alive()
+    assert server_errors == []
 
 
 def test_callable_mode_never_pickles_registered_task_registry(tmp_path):
