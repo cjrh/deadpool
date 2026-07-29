@@ -1,3 +1,5 @@
+from concurrent.futures import as_completed, wait
+
 import pytest
 
 from deadpool.remote import (
@@ -154,3 +156,7 @@ def test_future_local_cancellation_never_contacts_server():
     assert future.submission_state is SubmissionState.CANCELLED
     assert client.cancel_calls == 0
     assert callbacks == [True]
+    done, not_done = wait([future], timeout=0.1)
+    assert done == {future}
+    assert not not_done
+    assert list(as_completed([future], timeout=0.1)) == [future]

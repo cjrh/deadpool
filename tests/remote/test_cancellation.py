@@ -1,7 +1,7 @@
 import threading
 import time
 from collections.abc import Callable
-from concurrent.futures import CancelledError
+from concurrent.futures import CancelledError, as_completed, wait
 from functools import partial
 
 import pytest
@@ -69,6 +69,10 @@ def test_queued_cancellation_prevents_execution(tmp_path):
         wait_until(lambda: queued.submission_state is SubmissionState.ACCEPTED_QUEUED)
         assert queued.cancel()
         assert queued.cancelled()
+        done, not_done = wait([queued], timeout=0.1)
+        assert done == {queued}
+        assert not not_done
+        assert list(as_completed([queued], timeout=0.1)) == [queued]
         release.touch()
         assert running.result(timeout=5) == "done"
         assert running_marker.read_text() == "done"

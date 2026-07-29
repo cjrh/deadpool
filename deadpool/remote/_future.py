@@ -52,7 +52,7 @@ class RemoteFuture(concurrent.futures.Future):
                 return False
             if self.submission_state == SubmissionState.LOCAL_PENDING:
                 self.submission_state = SubmissionState.CANCELLED
-                cancelled = super().cancel()
+                cancelled = self._cancel_and_notify_waiters()
                 self._dispatch_callbacks()
                 return cancelled
         client = self._client()
@@ -148,8 +148,15 @@ class RemoteFuture(concurrent.futures.Future):
             if self.done():
                 return
             self.submission_state = SubmissionState.CANCELLED
-            super().cancel()
+            self._cancel_and_notify_waiters()
         self._dispatch_callbacks()
+
+    def _cancel_and_notify_waiters(self) -> bool:
+        # stdlib waiters require the executor-side cancellation notification.
+        cancelled = super().cancel()
+        if cancelled:
+            super().set_running_or_notify_cancel()
+        return cancelled
 
     def _dispatch_callbacks(self) -> None:
         with self._state_lock:
