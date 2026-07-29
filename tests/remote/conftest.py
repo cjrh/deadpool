@@ -22,4 +22,3 @@ def remote_pair(tmp_path):
     finally:
         client.shutdown(wait=True, cancel_futures=True)
         server.shutdown(wait=True, cancel_futures=True, deadline=5)
-
