@@ -1156,10 +1156,6 @@ class DeadpoolServer:
         record.terminal_payload = b""
         session.requests.pop(record.request_id, None)
         self._requests.pop(record.request_id, None)
-        if not session.requests:
-            self._sessions.pop(session.session_id, None)
-            if self._client_sessions.get(session.client_id) is session:
-                self._client_sessions.pop(session.client_id, None)
 
     def _purge_session_locked(self, session: _Session) -> None:
         for record in list(session.requests.values()):

@@ -245,6 +245,35 @@ def test_retained_outcome_capacity_is_reserved_and_released(tmp_path):
         server.shutdown(cancel_futures=True, deadline=5)
 
 
+def test_live_session_releases_outcomes_across_idle_cycles(tmp_path):
+    socket_path = tmp_path / "pool.sock"
+    limits = RemoteLimits(
+        max_retained_outcomes_per_session=1,
+        max_retained_outcomes_global=1,
+    )
+    server = DeadpoolServer(
+        partial(deadpool.Deadpool, max_workers=1, mp_context="forkserver"),
+        listeners=[UnixListener(socket_path)],
+        limits=limits,
+    ).start()
+    client = DeadpoolClient(UnixAddress(socket_path), limits=limits)
+    try:
+        for args, expected in [((1, 2), 3), ((3, 4), 7)]:
+            assert client.submit(add, *args).result(timeout=5) == expected
+            deadline = time.monotonic() + 2
+            while (
+                server.get_statistics()["remote_retained_outcomes"]
+                and time.monotonic() < deadline
+            ):
+                time.sleep(0.01)
+            stats = server.get_statistics()
+            assert stats["remote_retained_outcomes"] == 0
+            assert stats["remote_sessions"] == 1
+    finally:
+        client.shutdown(cancel_futures=True)
+        server.shutdown(cancel_futures=True, deadline=5)
+
+
 def test_continue_disconnect_releases_unreachable_terminal_outcome(tmp_path):
     socket_path = tmp_path / "pool.sock"
     limits = RemoteLimits(
