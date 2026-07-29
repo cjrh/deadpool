@@ -47,6 +47,7 @@ logger = logging.getLogger("deadpool.remote")
 
 class ServerState(str, Enum):
     CREATED = "CREATED"
+    STARTING = "STARTING"
     RUNNING = "RUNNING"
     DRAINING = "DRAINING"
     STOPPING = "STOPPING"
@@ -288,16 +289,26 @@ class DeadpoolServer:
     def start(self) -> "DeadpoolServer":
         with self._lock:
             if self._serve_thread is None:
+                if self.state != ServerState.CREATED:
+                    raise RuntimeError("a stopped remote server cannot be started")
+                self.state = ServerState.STARTING
                 self._serve_thread = threading.Thread(
                     target=self.serve_forever,
                     name="deadpool.remote.server",
                     daemon=False,
                 )
-                self._serve_thread.start()
-        # Every caller observes the same readiness or startup failure. In
-        # particular, a concurrent caller must not return merely because the
-        # serve thread has been created.
-        self.wait_ready(self.limits.handshake_timeout)
+                try:
+                    self._serve_thread.start()
+                except BaseException as error:
+                    self._startup_error = error
+                    self.state = ServerState.STOPPED
+                    self.ready.set()
+                    self._stopped.set()
+                    raise
+        # Pool construction and listener binding are not handshake operations.
+        # Every caller waits for their shared readiness outcome.
+        if not self.wait_ready():
+            raise RuntimeError("remote server stopped before becoming ready")
         return self
 
     def wait_ready(self, timeout: float | None = None) -> bool:
@@ -305,9 +316,19 @@ class DeadpoolServer:
             raise TimeoutError("remote server did not become ready")
         if self._startup_error is not None:
             raise self._startup_error
-        return self.state == ServerState.RUNNING
+        return self._pool is not None
 
     def serve_forever(self) -> None:
+        with self._condition:
+            current_thread = threading.current_thread()
+            background_start = self._serve_thread is not None
+            if self._serve_thread is None:
+                if self.state != ServerState.CREATED:
+                    raise RuntimeError("a stopped remote server cannot be served")
+                self._serve_thread = current_thread
+                self.state = ServerState.STARTING
+            elif self._serve_thread is not current_thread:
+                raise RuntimeError("remote server is already being served")
         try:
             self._initialize()
         except BaseException as error:
@@ -317,14 +338,19 @@ class DeadpoolServer:
             self._close_bound()
             self.ready.set()
             self._stopped.set()
-            if threading.current_thread() is not self._serve_thread:
+            if not background_start:
                 raise
             return
         self._stopped.wait()
 
     def _initialize(self) -> None:
-        with self._lock:
-            if self.state != ServerState.CREATED:
+        with self._condition:
+            if self.state != ServerState.STARTING:
+                if self.state == ServerState.STOPPING:
+                    self.state = ServerState.STOPPED
+                    self.ready.set()
+                    self._stopped.set()
+                    self._condition.notify_all()
                 return
         pool = self.pool_factory()
         bound: list[BoundListener] = []
@@ -338,28 +364,49 @@ class DeadpoolServer:
             if not bound:
                 raise OSError("no listeners could be bound")
         except BaseException:
-            for item in bound:
-                item.close()
-            try:
-                pool.shutdown(wait=True, cancel_futures=True)
-            except BaseException:
-                pass
+            self._discard_startup_resources(pool, bound)
             raise
-        with self._lock:
-            self._pool = pool
-            self._bound = bound
-            self.state = ServerState.RUNNING
-        threading.Thread(
-            target=self._dispatch_loop, name="deadpool.remote.broker", daemon=True
-        ).start()
+        with self._condition:
+            if self.state != ServerState.STARTING:
+                startup_cancelled = True
+            else:
+                startup_cancelled = False
+                self._pool = pool
+                self._bound = bound
+                self.state = ServerState.RUNNING
+                threading.Thread(
+                    target=self._dispatch_loop,
+                    name="deadpool.remote.broker",
+                    daemon=True,
+                ).start()
+                for item in bound:
+                    threading.Thread(
+                        target=self._accept_loop,
+                        args=(item,),
+                        name="deadpool.remote.accept",
+                        daemon=True,
+                    ).start()
+                self.ready.set()
+        if startup_cancelled:
+            self._discard_startup_resources(pool, bound)
+            with self._condition:
+                self.state = ServerState.STOPPED
+                self.ready.set()
+                self._stopped.set()
+                self._condition.notify_all()
+
+    def _discard_startup_resources(
+        self, pool: object, bound: list[BoundListener]
+    ) -> None:
         for item in bound:
-            threading.Thread(
-                target=self._accept_loop,
-                args=(item,),
-                name="deadpool.remote.accept",
-                daemon=True,
-            ).start()
-        self.ready.set()
+            try:
+                item.close()
+            except BaseException:
+                logger.exception("failed to close an unpublished remote listener")
+        try:
+            pool.shutdown(wait=True, cancel_futures=True)
+        except BaseException:
+            logger.exception("failed to shut down an unpublished remote pool")
 
     def _accept_loop(self, bound: BoundListener) -> None:
         while self.state in {ServerState.RUNNING, ServerState.DRAINING}:
@@ -1191,30 +1238,41 @@ class DeadpoolServer:
             if validated_deadline is not None
             else None
         )
+        startup_stopping = False
         with self._condition:
             if self.state == ServerState.STOPPED:
                 return
             if self.state == ServerState.CREATED:
                 self.state = ServerState.STOPPED
+                self.ready.set()
                 self._stopped.set()
                 return
-            if self.state == ServerState.RUNNING:
-                self.state = ServerState.DRAINING
-            self._shutdown_cancel_futures |= cancel_futures
-            if absolute_deadline is not None and (
-                self._shutdown_deadline_at is None
-                or absolute_deadline < self._shutdown_deadline_at
-            ):
-                self._shutdown_deadline_at = absolute_deadline
-            if self._shutdown_thread is None:
-                self._shutdown_thread = threading.Thread(
-                    target=self._finish_shutdown,
-                    name="deadpool.remote.shutdown",
-                    daemon=False,
-                )
-                self._shutdown_thread.start()
+            if self.state == ServerState.STARTING:
+                self.state = ServerState.STOPPING
+                startup_stopping = True
+            elif self.state == ServerState.STOPPING and not self.ready.is_set():
+                startup_stopping = True
+            else:
+                if self.state == ServerState.RUNNING:
+                    self.state = ServerState.DRAINING
+                self._shutdown_cancel_futures |= cancel_futures
+                if absolute_deadline is not None and (
+                    self._shutdown_deadline_at is None
+                    or absolute_deadline < self._shutdown_deadline_at
+                ):
+                    self._shutdown_deadline_at = absolute_deadline
+                if self._shutdown_thread is None:
+                    self._shutdown_thread = threading.Thread(
+                        target=self._finish_shutdown,
+                        name="deadpool.remote.shutdown",
+                        daemon=False,
+                    )
+                    self._shutdown_thread.start()
             self._condition.notify_all()
-        if wait and self._shutdown_thread is not threading.current_thread():
+        if startup_stopping:
+            if wait and self._serve_thread is not threading.current_thread():
+                self._stopped.wait()
+        elif wait and self._shutdown_thread is not threading.current_thread():
             self._shutdown_thread.join()
 
     def _finish_shutdown(self) -> None:

@@ -2,6 +2,7 @@ import errno
 import socket
 import stat
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ import deadpool
 from deadpool.remote import (
     DeadpoolClient,
     DeadpoolServer,
+    RemoteLimits,
     ServerState,
     UnixAddress,
     UnixListener,
@@ -57,9 +59,46 @@ def test_failed_startup_is_stopped_repeatable_and_non_destructive(
     assert path.is_symlink() if path_kind == "symlink" else path.read_text() == "keep"
 
 
-def test_concurrent_start_waits_for_shared_readiness(tmp_path: Path) -> None:
+def test_thread_start_failure_is_terminal_and_repeatable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     path = tmp_path / "pool.sock"
     server = DeadpoolServer(pool_factory, listeners=[UnixListener(path)])
+
+    def fail_thread_start(thread: threading.Thread) -> None:
+        raise RuntimeError("thread unavailable")
+
+    monkeypatch.setattr(threading.Thread, "start", fail_thread_start)
+    with pytest.raises(RuntimeError, match="thread unavailable"):
+        server.start()
+
+    assert server.state is ServerState.STOPPED
+    assert server.ready.is_set()
+    assert server._stopped.is_set()
+    with pytest.raises(RuntimeError, match="thread unavailable"):
+        server.start()
+    server.shutdown()
+
+
+def test_direct_serve_forever_propagates_startup_failure(tmp_path: Path) -> None:
+    path = tmp_path / "pool.sock"
+    path.write_text("keep")
+    server = DeadpoolServer(pool_factory, listeners=[UnixListener(path)])
+
+    with pytest.raises(ValueError, match="unexpected Unix socket path"):
+        server.serve_forever()
+
+    assert server.state is ServerState.STOPPED
+    assert path.read_text() == "keep"
+
+
+def test_concurrent_start_waits_for_shared_readiness(tmp_path: Path) -> None:
+    path = tmp_path / "pool.sock"
+    server = DeadpoolServer(
+        pool_factory,
+        listeners=[UnixListener(path)],
+        limits=RemoteLimits(handshake_timeout=0.02),
+    )
     initialize = server._initialize
     initialization_entered = threading.Event()
     allow_initialization = threading.Event()
@@ -88,6 +127,8 @@ def test_concurrent_start_waits_for_shared_readiness(tmp_path: Path) -> None:
         assert initialization_entered.wait(5)
         second.start()
         assert not second_returned.wait(0.1)
+        assert first.is_alive()
+        assert errors == []
         allow_initialization.set()
         first.join(5)
         second.join(5)
@@ -102,6 +143,118 @@ def test_concurrent_start_waits_for_shared_readiness(tmp_path: Path) -> None:
         if second.ident is not None:
             second.join(5)
         server.shutdown(cancel_futures=True, deadline=5)
+
+
+def test_start_keeps_a_published_readiness_outcome_during_shutdown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "pool.sock"
+    server = DeadpoolServer(pool_factory, listeners=[UnixListener(path)])
+    readiness_observed = threading.Event()
+    release_waiter = threading.Event()
+    start_errors = []
+    wait_for_ready = server.ready.wait
+
+    def delayed_wait(timeout=None) -> bool:
+        result = wait_for_ready(timeout)
+        readiness_observed.set()
+        assert release_waiter.wait(5)
+        return result
+
+    monkeypatch.setattr(server.ready, "wait", delayed_wait)
+
+    def start_server() -> None:
+        try:
+            server.start()
+        except BaseException as error:
+            start_errors.append(error)
+
+    startup_thread = threading.Thread(target=start_server)
+    try:
+        startup_thread.start()
+        assert readiness_observed.wait(5)
+        assert server.state is ServerState.RUNNING
+        server.shutdown(cancel_futures=True, deadline=5)
+        assert server.state is ServerState.STOPPED
+    finally:
+        release_waiter.set()
+        startup_thread.join(5)
+        server.shutdown(cancel_futures=True, deadline=5)
+
+    assert not startup_thread.is_alive()
+    assert start_errors == []
+
+
+def test_shutdown_during_startup_cleans_unpublished_resources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "pool.sock"
+    pool_created = threading.Event()
+    allow_factory_return = threading.Event()
+    shutdown_complete = threading.Event()
+    startup_errors = []
+
+    class RecordingPool:
+        def __init__(self) -> None:
+            self.shutdown_calls = []
+
+        def shutdown(self, wait=True, *, cancel_futures=False) -> None:
+            self.shutdown_calls.append((wait, cancel_futures))
+
+    pool = RecordingPool()
+    close_listener = _transport.BoundListener.close
+
+    def close_then_fail(listener: _transport.BoundListener) -> None:
+        close_listener(listener)
+        raise OSError("simulated listener cleanup failure")
+
+    monkeypatch.setattr(_transport.BoundListener, "close", close_then_fail)
+
+    def slow_pool_factory() -> RecordingPool:
+        pool_created.set()
+        assert allow_factory_return.wait(5)
+        return pool
+
+    server = DeadpoolServer(slow_pool_factory, listeners=[UnixListener(path)])
+
+    def start_server() -> None:
+        try:
+            server.start()
+        except BaseException as error:
+            startup_errors.append(error)
+
+    def stop_server() -> None:
+        server.shutdown()
+        shutdown_complete.set()
+
+    startup_thread = threading.Thread(target=start_server)
+    shutdown_thread = threading.Thread(target=stop_server)
+    try:
+        startup_thread.start()
+        assert pool_created.wait(5)
+        shutdown_thread.start()
+        deadline = time.monotonic() + 2
+        while (
+            server.state is not ServerState.STOPPING
+            and time.monotonic() < deadline
+        ):
+            time.sleep(0.005)
+        assert server.state is ServerState.STOPPING
+        assert not shutdown_complete.wait(0.05)
+    finally:
+        allow_factory_return.set()
+        startup_thread.join(5)
+        shutdown_thread.join(5)
+
+    assert not startup_thread.is_alive()
+    assert not shutdown_thread.is_alive()
+    assert len(startup_errors) == 1
+    assert isinstance(startup_errors[0], RuntimeError)
+    assert str(startup_errors[0]) == "remote server stopped before becoming ready"
+    assert pool.shutdown_calls == [(True, True)]
+    assert server.state is ServerState.STOPPED
+    assert server.bound_addresses == ()
+    assert not path.exists()
 
 
 def test_optional_listener_failure_does_not_prevent_valid_listener(
