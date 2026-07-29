@@ -763,6 +763,70 @@ when creating the instance:
    ):
        fut = exe.submit(...)
 
+Remote executor (experimental)
+==============================
+
+``deadpool.remote`` lets independent processes share one server-owned
+``Deadpool`` over a Unix-domain or IPv4 TCP socket. The client implements the
+standard ``Executor`` interface, including ordered ``map()`` results:
+
+.. code-block:: python
+
+   from functools import partial
+
+   import deadpool
+   from deadpool.remote import (
+       DeadpoolClient,
+       DeadpoolServer,
+       UnixAddress,
+       UnixListener,
+   )
+
+   server = DeadpoolServer(
+       partial(deadpool.Deadpool, max_workers=8),
+       listeners=[UnixListener("/run/example/deadpool.sock")],
+   )
+   server.start()
+
+   with DeadpoolClient(UnixAddress("/run/example/deadpool.sock")) as executor:
+       future = executor.submit(pow, 2, 10, deadpool_priority=5)
+       assert future.result() == 1024
+
+A server may also expose registered operations. Registered mode rejects unknown
+operation names before worker dispatch:
+
+.. code-block:: python
+
+   server = DeadpoolServer(
+       partial(deadpool.Deadpool, max_workers=8),
+       listeners=[UnixListener("/run/example/deadpool.sock")],
+       task_registry={"math.pow": pow},
+   )
+   future = executor.submit_task("math.pow", 2, 10)
+
+TCP uses the same protocol. Plaintext is restricted to an explicit loopback
+opt-in (``TcpListener("127.0.0.1", port, insecure=True)``); other deployments
+must supply configured server and client ``ssl.SSLContext`` objects. Mutual TLS
+is recommended.
+
+.. warning::
+
+   The default pickle callable mode is remote code execution by design. TLS
+   authenticates and encrypts peers; it does not sandbox Python deserialization
+   or worker execution. Only authorize mutually trusted clients.
+
+The current framed wire layout is private and experimental because the remote
+executor specification intentionally leaves stable frame octets and canonical
+schemas to a later wire reference. Matching Deadpool releases support bounded
+JSON control headers, opaque chunked payloads, request identity, typed failures,
+ordinary and hard cancellation, health/statistics requests, fair broker
+scheduling, and explicit shutdown behavior. The first implementation does not
+negotiate session resumption, compression, IPv6, protocol-5 out-of-band buffers,
+shared-memory/file result transports, durable state, progress events, or
+streaming results. It also does not advertise stronger parent-death cleanup than
+the local pool's existing process monitor. A lost unacknowledged submission is
+reported as ambiguous and is never silently retried with a new request ID.
+
 Developer Workflow
 ==================
 
@@ -837,7 +901,7 @@ I currently do:
 
 1. Ensure that ``main`` branch is fully up to date with all to
    be released, and all the tests succeed.
-2. Change the ``__version__`` field in ``deadpool.py``. Flit
+2. Change the ``__version__`` field in ``deadpool/__init__.py``. Flit
    uses this to stamp the version.
 3. Verify that ``flit build`` succeeds. This will produce a
    wheel in the ``dist/`` directory. You can inspect this

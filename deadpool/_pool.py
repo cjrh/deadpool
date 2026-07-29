@@ -21,6 +21,7 @@ worker process.
 
 import concurrent.futures
 import ctypes
+import itertools
 import logging
 import multiprocessing as mp
 import os
@@ -32,7 +33,6 @@ import traceback
 import typing
 import weakref
 import atexit
-import json
 from concurrent.futures import CancelledError, Executor, InvalidStateError, as_completed
 from dataclasses import dataclass, field
 from multiprocessing.connection import Connection
@@ -44,7 +44,8 @@ from functools import partial
 import psutil
 from setproctitle import setproctitle
 
-__version__ = "2026.6.1"
+from . import __version__ as __version__
+
 __all__ = [
     "Deadpool",
     "Future",
@@ -117,6 +118,7 @@ class Statistics:
 class PrioritizedItem:
     priority: int
     item: typing.Any = field(compare=False)
+    sequence: int = 0
 
 
 @dataclass(init=False)
@@ -276,6 +278,11 @@ class Future(concurrent.futures.Future):
 
     def add_pid_callback(self, fn):
         self.pid_callback = fn
+        if self.pid is not None:
+            try:
+                fn(self)
+            except Exception:  # pragma: no cover
+                logger.exception("Error calling pid_callback")
 
     def cancel_and_kill_if_running(self, sig=signal.SIGKILL):
         self.cancel()
@@ -376,6 +383,7 @@ class Deadpool(Executor):
             malloc_trim_rss_memory_threshold_bytes
         )
         self._statistics = Statistics()
+        self._submission_sequence = itertools.count()
 
         # TODO: overcommit
         self.workers: SimpleQueue[WorkerProcess] = SimpleQueue()
@@ -558,7 +566,20 @@ class Deadpool(Executor):
                 retry_count -= 1
                 worker: WorkerProcess = self.get_process()
                 try:
-                    worker.submit_job((fn, args, kwargs, timeout))
+                    before_submit = getattr(fut, "_before_submit", None)
+                    if before_submit is not None and not before_submit(worker.pid):
+                        self.done_with_process(worker)
+                        return
+                    try:
+                        worker.submit_job((fn, args, kwargs, timeout))
+                    except BaseException:
+                        submit_failed = getattr(fut, "_submit_failed", None)
+                        if submit_failed is not None:
+                            submit_failed(worker.pid)
+                        raise
+                    after_submit = getattr(fut, "_after_submit", None)
+                    if after_submit is not None:
+                        after_submit(worker.pid)
                     break
                 except (pickle.PicklingError, AttributeError) as e:
                     # If the user passed in a function or params that can't
@@ -690,10 +711,37 @@ class Deadpool(Executor):
             raise PoolClosed("The pool is closed. No more tasks can be submitted.")
 
         fut = Future()
+        return self._submit_future(
+            fut,
+            fn,
+            args,
+            kwargs,
+            deadpool_timeout,
+            deadpool_priority,
+        )
+
+    def _submit_future(
+        self,
+        fut: Future,
+        fn: Callable,
+        args: tuple,
+        kwargs: dict,
+        timeout,
+        priority,
+    ) -> Future:
+        """Submit using a framework-owned Future.
+
+        Remote brokerage uses this narrow private seam to arbitrate queued
+        cancellation against worker dispatch without changing local Future
+        semantics.
+        """
+        if self.closed:
+            raise PoolClosed("The pool is closed. No more tasks can be submitted.")
         self.submitted_jobs.put(
             PrioritizedItem(
-                priority=deadpool_priority,
-                item=(fn, args, kwargs, deadpool_timeout, fut),
+                priority=priority,
+                item=(fn, args, kwargs, timeout, fut),
+                sequence=next(self._submission_sequence),
             )
         )
         self._statistics.tasks_received.increment()
@@ -720,7 +768,11 @@ class Deadpool(Executor):
 
         try:
             self.submitted_jobs.put(
-                PrioritizedItem(priority=shutdown_priority, item=None),
+                PrioritizedItem(
+                    priority=shutdown_priority,
+                    item=None,
+                    sequence=next(self._submission_sequence),
+                ),
                 timeout=2.0,
             )
         except TimeoutError:  # pragma: no cover
