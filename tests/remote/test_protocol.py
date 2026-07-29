@@ -1,3 +1,4 @@
+import hashlib
 import socket
 import struct
 import threading
@@ -12,7 +13,9 @@ from deadpool.remote._protocol import (
     Message,
     MessageReader,
     MessageType,
+    _json_loads,
     send_message,
+    validate_control,
 )
 
 
@@ -78,3 +81,120 @@ def test_remote_limits_reject_unbounded_values():
         RemoteLimits(control_timeout=float("inf"))
     with pytest.raises(TypeError):
         RemoteLimits(max_chunks=1.5)
+
+
+@pytest.mark.parametrize("value", [-(2**63), 2**63 - 1])
+def test_control_accepts_signed_64_bit_boundaries(value):
+    validate_control({"value": value}, small_limits())
+
+
+@pytest.mark.parametrize("value", [-(2**63) - 1, 2**63])
+def test_control_rejects_values_outside_signed_64_bit_range(value):
+    with pytest.raises(RemoteProtocolError, match="signed 64-bit"):
+        validate_control({"value": value}, small_limits())
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        (b"\xff", "invalid control JSON"),
+        (b'{"key":1,"key":2}', "duplicate JSON key"),
+        (b'{"value":NaN}', "non-finite JSON number"),
+        (b"[]", "JSON object"),
+    ],
+)
+def test_hostile_control_json_is_rejected(payload, message):
+    with pytest.raises(RemoteProtocolError, match=message):
+        _json_loads(payload, small_limits())
+
+
+@pytest.mark.parametrize(
+    ("prefix", "message"),
+    [
+        (struct.pack("!4sBBBBII", b"NOPE", MAJOR, MINOR, 20, 0, 0, 0), "magic"),
+        (struct.pack("!4sBBBBII", MAGIC, MAJOR + 1, MINOR, 20, 0, 0, 0), "version"),
+        (struct.pack("!4sBBBBII", MAGIC, MAJOR, MINOR, 20, 2, 0, 0), "flags"),
+        (
+            struct.pack("!4sBBBBII", MAGIC, MAJOR, MINOR, 20, 0, 4097, 0),
+            "control header",
+        ),
+        (struct.pack("!4sBBBBII", MAGIC, MAJOR, MINOR, 255, 0, 0, 0), "message type"),
+    ],
+)
+def test_invalid_prefix_is_rejected_without_waiting_for_a_body(prefix, message):
+    sender, receiver = socket.socketpair()
+    try:
+        sender.sendall(prefix)
+        with pytest.raises(RemoteProtocolError, match=message):
+            MessageReader(small_limits(partial_frame_timeout=0.02)).receive(receiver)
+    finally:
+        sender.close()
+        receiver.close()
+
+
+def chunk_header(**changes):
+    values = {
+        "message_id": "message",
+        "index": 0,
+        "count": 1,
+        "total": 0,
+        "digest": hashlib.sha256(b"").hexdigest(),
+        "control": {},
+    }
+    values.update(changes)
+    return values
+
+
+@pytest.mark.parametrize(
+    ("header", "payload", "message"),
+    [
+        (chunk_header(index=True), b"", "must be integers"),
+        (chunk_header(index=1), b"", "index/count"),
+        (chunk_header(index=1, count=2), b"", "start at index zero"),
+        (chunk_header(total=0), b"x", "exceeds declared total"),
+        (chunk_header(total=1), b"x", "digest mismatch"),
+    ],
+)
+def test_chunk_state_machine_rejects_inconsistent_input(header, payload, message):
+    with pytest.raises(RemoteProtocolError, match=message):
+        MessageReader(small_limits())._accept(MessageType.RESULT, header, payload)
+
+
+def test_chunk_state_bounds_incomplete_messages_and_conflicting_metadata():
+    reader = MessageReader(small_limits(max_incomplete_messages=1))
+    digest = hashlib.sha256(b"xx").hexdigest()
+    first = chunk_header(count=2, total=2, digest=digest)
+    assert reader._accept(MessageType.RESULT, first, b"x") is None
+
+    with pytest.raises(RemoteProtocolError, match="too many incomplete"):
+        reader._accept(
+            MessageType.RESULT,
+            chunk_header(message_id="other", count=2, total=2, digest=digest),
+            b"x",
+        )
+    with pytest.raises(RemoteProtocolError, match="conflicting chunk metadata"):
+        reader._accept(
+            MessageType.RESULT,
+            chunk_header(index=1, count=2, total=3, digest=digest, control=None),
+            b"x",
+        )
+
+    completed = reader._accept(
+        MessageType.RESULT,
+        chunk_header(index=1, count=2, total=2, digest=digest, control=None),
+        b"x",
+    )
+    assert completed == Message(MessageType.RESULT, {}, b"xx")
+
+
+def test_oversized_outbound_message_is_rejected_before_socket_io():
+    class NoIoSocket:
+        def send(self, data):
+            raise AssertionError("send must not be called")
+
+    with pytest.raises(RemoteProtocolError, match="message payload"):
+        send_message(
+            NoIoSocket(),
+            Message(MessageType.RESULT, {}, b"x" * 129),
+            small_limits(),
+        )

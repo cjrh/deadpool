@@ -116,8 +116,8 @@ def _validate_json(value: object, limits: RemoteLimits, depth: int = 0) -> None:
     elif isinstance(value, bool) or value is None:
         return
     elif isinstance(value, int):
-        if value.bit_length() > 63:
-            raise RemoteProtocolError("control integer exceeds 64-bit range")
+        if not -(1 << 63) <= value < (1 << 63):
+            raise RemoteProtocolError("control integer exceeds signed 64-bit range")
     elif isinstance(value, float):
         if not math.isfinite(value):
             raise RemoteProtocolError("control number must be finite")

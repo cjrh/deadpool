@@ -46,7 +46,7 @@ test = [
     "pytest >= 7",
     "pytest-cov",
     "flake8",
-    "coverage[toml]"
+    "coverage[toml]>=7.10"
 ]
 
 [tool.black]

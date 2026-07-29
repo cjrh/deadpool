@@ -228,6 +228,13 @@ class DeadpoolClient(concurrent.futures.Executor):
         )
         payload = self._serialize_invocation(invocation_value, limit, deadline)
         with self._lock:
+            # Serialization deliberately runs outside the state lock. Recheck
+            # both shutdown and transport state when linearizing registration,
+            # because either may have changed while serialization was running.
+            if self._closed:
+                raise RuntimeError("cannot schedule new futures after shutdown")
+            if self._transport_failed or self._socket is None:
+                raise RemoteExecutorUnavailable("connection is unavailable")
             self._sequence += 1
             request_id = f"{self._client_id}:{self._sequence}"
             future = RemoteFuture(request_id, self)
@@ -378,9 +385,10 @@ class DeadpoolClient(concurrent.futures.Executor):
             token = message.control.get("token") or message.control.get("nonce")
             if isinstance(token, str):
                 with self._lock:
-                    rpc = self._rpc.get(token)
+                    rpc = self._rpc.pop(token, None)
+                    if rpc is not None:
+                        rpc[1].update(message.control)
                 if rpc is not None:
-                    rpc[1].update(message.control)
                     rpc[0].set()
         elif message.kind == MessageType.GOAWAY:
             self._connection_lost(RemoteConnectionLost("server closed the session"))
@@ -493,11 +501,11 @@ class DeadpoolClient(concurrent.futures.Executor):
                     "connection is unavailable", request_id=future.request_id
                 )
             self._rpc[token] = (event, response)
-        self._enqueue_control(
-            MessageType.CANCEL_REQUEST,
-            {"request_id": future.request_id, "hard": hard, "token": token},
-        )
         try:
+            self._enqueue_control(
+                MessageType.CANCEL_REQUEST,
+                {"request_id": future.request_id, "hard": hard, "token": token},
+            )
             if not event.wait(self.control_timeout):
                 raise RemoteCancellationOutcomeUnknown(
                     "timed out waiting for cancellation decision",
@@ -572,10 +580,13 @@ class DeadpoolClient(concurrent.futures.Executor):
                 raise RemoteConnectionLost("connection is unavailable")
             self._rpc[token] = (event, response)
         key = "nonce" if kind == MessageType.PING else "token"
-        self._enqueue_control(kind, {**control, key: token})
         try:
+            self._enqueue_control(kind, {**control, key: token})
             if not event.wait(timeout or self.control_timeout):
                 raise TimeoutError("remote control request timed out")
+            transport_error = response.get("_transport_error")
+            if transport_error is not None:
+                raise RemoteConnectionLost(str(transport_error))
             return response
         finally:
             with self._lock:
@@ -599,13 +610,14 @@ class DeadpoolClient(concurrent.futures.Executor):
             sock, self._socket = self._socket, None
             futures = list(self._futures.values())
             rpc = list(self._rpc.values())
+            self._rpc.clear()
         if sock is not None:
             try:
                 sock.close()
             except OSError:
                 pass
         for event, response in rpc:
-            response["error"] = str(error)
+            response["_transport_error"] = error
             event.set()
         for future in futures:
             with self._lock:
@@ -821,8 +833,11 @@ def _submission_options(kwargs: dict, default_submission_timeout: float) -> dict
     values["submission_timeout"] = _positive_timeout(
         values["submission_timeout"], "submission_timeout"
     )
-    if values["group_id"] is not None and not isinstance(values["group_id"], str):
-        raise TypeError("deadpool_group_id must be a string or None")
+    if values["group_id"] is not None:
+        if not isinstance(values["group_id"], str):
+            raise TypeError("deadpool_group_id must be a string or None")
+        if not values["group_id"]:
+            raise ValueError("deadpool_group_id must be non-empty")
     if not isinstance(values["metadata"], dict):
         raise TypeError("deadpool_metadata must be a dict")
     return values

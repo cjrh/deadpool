@@ -268,8 +268,10 @@ def test_continue_disconnect_releases_unreachable_terminal_outcome(tmp_path):
     try:
         assert client.submit(add, 1, 2).result(timeout=5) == 3
         assert server.get_statistics()["remote_retained_outcomes"] == 1
-        client._socket.shutdown(socket.SHUT_RDWR)
-        client._socket.close()
+        sock = client._socket
+        assert sock is not None
+        sock.shutdown(socket.SHUT_RDWR)
+        sock.close()
         deadline = time.monotonic() + 2
         while (
             server.get_statistics()["remote_retained_outcomes"]

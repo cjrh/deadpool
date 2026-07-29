@@ -8,6 +8,7 @@ import stat
 import struct
 from contextlib import contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 
 from .config import PeerInfo, TcpAddress, TcpListener, UnixAddress, UnixListener
 
@@ -29,15 +30,8 @@ class BoundListener:
                     current = path.lstat()
                 except FileNotFoundError:
                     current = None
-                if (
-                    current is not None
-                    and (
-                        current.st_dev,
-                        current.st_ino,
-                    )
-                    == self.unix_identity
-                ):
-                    path.unlink()
+                if current is not None:
+                    _unlink_if_identity(path, current, self.unix_identity)
 
 
 def bind_listener(config: UnixListener | TcpListener) -> BoundListener:
@@ -102,15 +96,23 @@ def _bind_unix(config: UnixListener) -> BoundListener:
             probe.settimeout(0.2)
             probe.connect(str(path))
         except (ConnectionRefusedError, FileNotFoundError, socket.timeout):
-            path.unlink(missing_ok=True)
+            try:
+                current = path.lstat()
+            except FileNotFoundError:
+                pass
+            else:
+                _unlink_if_identity(path, current, (info.st_dev, info.st_ino))
         else:
             raise OSError(f"Unix socket is already live: {path}")
         finally:
             probe.close()
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    identity: tuple[int, int] | None = None
     try:
         with _umask(0o077):
             sock.bind(str(path))
+        bound = path.lstat()
+        identity = (bound.st_dev, bound.st_ino)
         if config.owner_uid is not None or config.owner_gid is not None:
             os.chown(
                 path,
@@ -119,12 +121,29 @@ def _bind_unix(config: UnixListener) -> BoundListener:
             )
         os.chmod(path, config.mode)
         sock.listen(config.backlog)
-        identity = path.stat()
-        return BoundListener(config, sock, path, (identity.st_dev, identity.st_ino))
+        return BoundListener(config, sock, path, identity)
     except BaseException:
         sock.close()
-        path.unlink(missing_ok=True)
+        if identity is not None:
+            try:
+                current = path.lstat()
+            except FileNotFoundError:
+                pass
+            else:
+                _unlink_if_identity(path, current, identity)
         raise
+
+
+def _unlink_if_identity(
+    path: Path, current: os.stat_result, identity: tuple[int, int]
+) -> None:
+    """Compare identity immediately before unlinking a Unix listener path.
+
+    This protects replacements visible to the final ``lstat``. A portable
+    ``lstat``/``unlink`` sequence still has an unavoidable TOCTOU window.
+    """
+    if (current.st_dev, current.st_ino) == identity:
+        path.unlink()
 
 
 def _validate_unix_directory(path) -> None:

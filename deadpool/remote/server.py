@@ -287,12 +287,16 @@ class DeadpoolServer:
 
     def start(self) -> "DeadpoolServer":
         with self._lock:
-            if self._serve_thread is not None:
-                return self
-            self._serve_thread = threading.Thread(
-                target=self.serve_forever, name="deadpool.remote.server", daemon=False
-            )
-            self._serve_thread.start()
+            if self._serve_thread is None:
+                self._serve_thread = threading.Thread(
+                    target=self.serve_forever,
+                    name="deadpool.remote.server",
+                    daemon=False,
+                )
+                self._serve_thread.start()
+        # Every caller observes the same readiness or startup failure. In
+        # particular, a concurrent caller must not return merely because the
+        # serve thread has been created.
         self.wait_ready(self.limits.handshake_timeout)
         return self
 
@@ -307,7 +311,9 @@ class DeadpoolServer:
         try:
             self._initialize()
         except BaseException as error:
-            self._startup_error = error
+            with self._lock:
+                self._startup_error = error
+                self.state = ServerState.STOPPED
             self._close_bound()
             self.ready.set()
             self._stopped.set()
@@ -1096,7 +1102,10 @@ class DeadpoolServer:
                 and not connection.clean_close
                 and self.disconnect_policy in {"cancel_queued", "terminate"}
             ):
-                for record in session.requests.values():
+                # Hard cancellation can complete a worker concurrently and
+                # purge terminal records, so disconnect arbitration iterates a
+                # stable snapshot of the session's requests.
+                for record in list(session.requests.values()):
                     if record.state == RequestState.ACCEPTED_QUEUED:
                         self._scheduler.remove(record)
                         self._terminal_locked(

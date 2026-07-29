@@ -31,12 +31,12 @@ def test(session):
 )
 def testcov(session):
     session.install(".")
-    session.install("pytest", "pytest-html", "coverage")
+    session.install("pytest", "pytest-html", "coverage>=7.10")
     EXTRA_PYTEST = " ".join(session.posargs)
+    session.run("coverage", "erase")
     session.run(
         *shlex.split(
-            f"coverage run --concurrency=multiprocessing,thread "
-            f"-m pytest {EXTRA_PYTEST}"
+            f"coverage run -m pytest {EXTRA_PYTEST}"
             f" --html=report.html --self-contained-html"
         )
     )
