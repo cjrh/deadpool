@@ -92,26 +92,21 @@ def _bind_unix(config: UnixListener) -> BoundListener:
             raise ValueError(f"refusing unexpected Unix socket path type: {path}")
         if config.stale_policy != "force_unlink":
             raise FileExistsError(path)
-        probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        try:
-            probe.settimeout(0.2)
-            probe.connect(str(path))
-        except (ConnectionRefusedError, FileNotFoundError, socket.timeout):
-            try:
-                current = path.lstat()
-            except FileNotFoundError:
-                pass
-            else:
-                if not _unlink_if_identity(path, current, (info.st_dev, info.st_ino)):
-                    raise OSError(
-                        errno.EADDRINUSE,
-                        os.strerror(errno.EADDRINUSE),
-                        str(path),
-                    )
-        else:
+        if _unix_socket_is_live(path):
             raise OSError(f"Unix socket is already live: {path}")
-        finally:
-            probe.close()
+
+        # A socket may replace the stale path after its first failed probe.
+        # Confirm it remains unreachable before removing the pathname.
+        if _unix_socket_is_live(path):
+            raise _address_in_use(path)
+
+        try:
+            current = path.lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            if not _unlink_if_identity(path, current, (info.st_dev, info.st_ino)):
+                raise _address_in_use(path)
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     identity: tuple[int, int] | None = None
     try:
@@ -138,6 +133,23 @@ def _bind_unix(config: UnixListener) -> BoundListener:
             else:
                 _unlink_if_identity(path, current, identity)
         raise
+
+
+def _unix_socket_is_live(path: Path) -> bool:
+    """Return whether a Unix socket pathname currently accepts connections."""
+    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        probe.settimeout(0.2)
+        probe.connect(str(path))
+    except (ConnectionRefusedError, FileNotFoundError, socket.timeout):
+        return False
+    finally:
+        probe.close()
+    return True
+
+
+def _address_in_use(path: Path) -> OSError:
+    return OSError(errno.EADDRINUSE, os.strerror(errno.EADDRINUSE), str(path))
 
 
 def _unlink_if_identity(

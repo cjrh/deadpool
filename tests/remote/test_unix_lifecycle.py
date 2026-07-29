@@ -186,17 +186,36 @@ def test_stale_probe_does_not_unlink_a_replacement(
             return None
 
     probe = RacingProbe()
+    replacement_was_verified = False
+
+    class ReplacementVerifier:
+        def settimeout(self, timeout: float) -> None:
+            return None
+
+        def connect(self, address: str) -> None:
+            nonlocal replacement_was_verified
+            replacement_was_verified = True
+
+        def close(self) -> None:
+            return None
+
+    verifier = ReplacementVerifier()
     calls = 0
 
     def socket_factory(*args: object, **kwargs: object) -> object:
         nonlocal calls
         calls += 1
-        return probe if calls == 1 else real_socket(*args, **kwargs)
+        if calls == 1:
+            return probe
+        if calls == 2:
+            return verifier
+        return real_socket(*args, **kwargs)
 
     monkeypatch.setattr(_transport.socket, "socket", socket_factory)
     try:
         with pytest.raises(OSError, match="Address already in use"):
             _transport.bind_listener(UnixListener(path, stale_policy="force_unlink"))
+        assert replacement_was_verified
         assert probe.winner is not None
         verifier = real_socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
