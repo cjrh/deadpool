@@ -9,6 +9,9 @@ from pathlib import Path
 from typing import Protocol, runtime_checkable
 
 
+_INSECURE_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost"})
+
+
 @dataclass(frozen=True, slots=True)
 class UnixAddress:
     path: str | Path
@@ -38,6 +41,8 @@ class TcpAddress:
             raise ValueError("TCP requires ssl_context or explicit insecure=True")
         if self.ssl_context is not None:
             _validate_client_tls(self.ssl_context)
+        if self.insecure and self.host not in _INSECURE_LOOPBACK_HOSTS:
+            raise ValueError("insecure TCP addresses are restricted to loopback")
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,7 +96,7 @@ class TcpListener:
             raise ValueError("TCP requires ssl_context or explicit insecure=True")
         if self.ssl_context is not None:
             _validate_server_tls(self.ssl_context)
-        if self.insecure and self.host not in {"127.0.0.1", "localhost"}:
+        if self.insecure and self.host not in _INSECURE_LOOPBACK_HOSTS:
             raise ValueError("insecure TCP listeners are restricted to loopback")
 
 

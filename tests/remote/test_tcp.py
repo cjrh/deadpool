@@ -234,5 +234,7 @@ def test_tls_configuration_rejects_versions_older_than_tls_1_2():
 def test_plaintext_tcp_requires_explicit_loopback_opt_in():
     with pytest.raises(ValueError):
         TcpAddress("127.0.0.1", 1)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="addresses are restricted to loopback"):
+        TcpAddress("example.com", 443, insecure=True)
+    with pytest.raises(ValueError, match="listeners are restricted to loopback"):
         TcpListener("0.0.0.0", 0, insecure=True)
