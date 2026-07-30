@@ -190,6 +190,23 @@ def test_chunk_state_machine_rejects_inconsistent_input(header, payload, message
         MessageReader(small_limits())._accept(MessageType.RESULT, header, payload)
 
 
+def test_deep_control_json_is_a_typed_protocol_error() -> None:
+    payload = b"[" * 2000 + b"0" + b"]" * 2000
+    with pytest.raises(RemoteProtocolError, match="too deeply nested"):
+        _json_loads(payload, small_limits())
+
+
+def test_json_decoder_recursion_error_is_normalized(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def recurse(*args: object, **kwargs: object) -> object:
+        raise RecursionError("decoder recursion limit")
+
+    monkeypatch.setattr("deadpool.remote._protocol.json.loads", recurse)
+    with pytest.raises(RemoteProtocolError, match="invalid control JSON"):
+        _json_loads(b"{}", small_limits())
+
+
 def test_chunk_state_bounds_incomplete_messages_and_conflicting_metadata():
     reader = MessageReader(small_limits(max_incomplete_messages=1))
     digest = hashlib.sha256(b"xx").hexdigest()
