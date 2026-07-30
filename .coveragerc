@@ -1,4 +1,12 @@
 [run]
 source = deadpool
 branch = True
-#concurrency=multiprocessing
+relative_files = True
+parallel = True
+concurrency =
+    multiprocessing
+    thread
+patch =
+    fork
+    subprocess
+    _exit
