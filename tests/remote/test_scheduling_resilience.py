@@ -1,4 +1,5 @@
 import socket
+import threading
 import time
 from functools import partial
 from pathlib import Path
@@ -7,6 +8,7 @@ from typing import Callable
 import pytest
 
 import deadpool
+from deadpool._pool import WorkerProcess
 from deadpool.remote import (
     DeadpoolClient,
     DeadpoolServer,
@@ -102,6 +104,77 @@ def test_fingerprint_compatibility_and_authorization_are_end_to_end(
                 application_fingerprint="app-v2",
             )
         assert client.check_health()
+    finally:
+        client.shutdown(cancel_futures=True)
+        server.shutdown(cancel_futures=True, deadline=5)
+
+
+def test_worker_pipe_write_does_not_hold_broker_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    entered = threading.Event()
+    release = threading.Event()
+    original_submit_job = WorkerProcess.submit_job
+
+    def blocked_submit_job(self: WorkerProcess, job: object) -> None:
+        entered.set()
+        if not release.wait(5):
+            raise TimeoutError("worker pipe test barrier was not released")
+        original_submit_job(self, job)
+
+    monkeypatch.setattr(WorkerProcess, "submit_job", blocked_submit_job)
+    path = tmp_path / "pool.sock"
+    server = DeadpoolServer(
+        partial(deadpool.Deadpool, max_workers=1, mp_context="forkserver"),
+        listeners=[UnixListener(path)],
+    ).start()
+    client = DeadpoolClient(UnixAddress(path))
+    marker = tmp_path / "must-not-run"
+    future = client.submit(mark, marker)
+    try:
+        assert entered.wait(2)
+        queued = client.submit(multiply, 6, 7)
+        wait_until(
+            lambda: queued.submission_state is SubmissionState.ACCEPTED_QUEUED
+        )
+        assert future.cancel_and_kill_if_running()
+        release.set()
+
+        assert future.cancelled()
+        assert queued.result(5) == 42
+        assert not marker.exists()
+    finally:
+        release.set()
+        client.shutdown(cancel_futures=True)
+        server.shutdown(cancel_futures=True, deadline=5)
+
+
+def test_worker_pipe_broken_pipe_retry_preserves_running_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    attempted_pids: list[int] = []
+    original_submit_job = WorkerProcess.submit_job
+
+    def fail_first_submit(self: WorkerProcess, job: object) -> None:
+        attempted_pids.append(self.pid)
+        if len(attempted_pids) == 1:
+            raise BrokenPipeError("injected worker pipe failure")
+        original_submit_job(self, job)
+
+    monkeypatch.setattr(WorkerProcess, "submit_job", fail_first_submit)
+    path = tmp_path / "pool.sock"
+    server = DeadpoolServer(
+        partial(deadpool.Deadpool, max_workers=1, mp_context="forkserver"),
+        listeners=[UnixListener(path)],
+    ).start()
+    client = DeadpoolClient(UnixAddress(path))
+    try:
+        future = client.submit(multiply, 6, 7)
+        assert future.result(5) == 42
+        assert len(attempted_pids) == 2
+        assert attempted_pids[0] != attempted_pids[1]
+        assert future.pid == attempted_pids[-1]
+        assert server.get_statistics()["remote_tasks_running"] == 1
     finally:
         client.shutdown(cancel_futures=True)
         server.shutdown(cancel_futures=True, deadline=5)

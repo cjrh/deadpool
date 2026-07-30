@@ -129,9 +129,7 @@ class _Session:
 class _PoolFuture(LocalFuture):
     def __init__(self, server: "DeadpoolServer", record: _Request) -> None:
         super().__init__()
-        self._before_submit = lambda pid: server._begin_dispatch(record, pid)
-        self._after_submit = lambda pid: server._commit_running(record, pid)
-        self._submit_failed = lambda pid: server._abort_dispatch(record, pid)
+        self._before_submit = lambda pid: server._claim_dispatch(record, pid)
 
 
 @dataclass(slots=True)
@@ -895,33 +893,39 @@ class DeadpoolServer:
                 if record.local_future is not None:
                     record.local_future.cancel()
 
-    def _begin_dispatch(self, record: _Request, pid: int) -> bool:
-        # Hold the arbitration lock across the small pipe send. Cancellation,
-        # queue timeout, and dispatch can therefore have exactly one winner.
-        self._condition.acquire()
-        if record.state != RequestState.ACCEPTED_QUEUED:
-            self._condition.release()
-            return False
-        if (
-            record.queue_deadline is not None
-            and time.monotonic() >= record.queue_deadline
-        ):
-            self._terminal_locked(
-                record,
-                RequestState.QUEUE_TIMED_OUT,
-                MessageType.QUEUE_TIMED_OUT,
-                {"reason": "queue_timeout"},
-            )
-            if record.local_future is not None:
-                record.local_future.cancel()
-            self._condition.release()
-            return False
-        return True
+    def _claim_dispatch(self, record: _Request, pid: int) -> bool:
+        """Atomically cross the queue/worker boundary before pipe I/O.
 
-    def _commit_running(self, record: _Request, pid: int) -> None:
-        try:
-            record.state = RequestState.RUNNING
-            self._statistics["remote_tasks_running"] += 1
+        Marking the request running makes cancellation and queue expiry lose the
+        arbitration race without holding the broker lock while a potentially
+        large invocation is written to the worker pipe. A broken worker retry
+        may claim the same already-running request until it becomes terminal.
+        """
+        with self._condition:
+            if record.state == RequestState.ACCEPTED_QUEUED:
+                if (
+                    record.queue_deadline is not None
+                    and time.monotonic() >= record.queue_deadline
+                ):
+                    self._terminal_locked(
+                        record,
+                        RequestState.QUEUE_TIMED_OUT,
+                        MessageType.QUEUE_TIMED_OUT,
+                        {"reason": "queue_timeout"},
+                    )
+                    if record.local_future is not None:
+                        record.local_future.cancel()
+                    return False
+                record.state = RequestState.RUNNING
+                self._statistics["remote_tasks_running"] += 1
+            elif record.state != RequestState.RUNNING:
+                return False
+            # Publish the selected PID before pipe I/O so a concurrent hard
+            # cancellation can terminate a writer blocked in submit_job().
+            if record.local_future is not None:
+                record.local_future.pid = pid
+            # Broken-pipe retries publish the replacement worker identity
+            # without counting the request as running twice.
             record.connection.send(
                 MessageType.RUNNING,
                 {
@@ -930,13 +934,7 @@ class DeadpoolServer:
                     "worker_id": f"worker:{pid}",
                 },
             )
-        finally:
-            self._condition.release()
-
-    def _abort_dispatch(self, record: _Request, pid: int) -> None:
-        # The worker pipe did not accept bytes, so the request remains queued
-        # and Deadpool may retry it with another worker under the same ID.
-        self._condition.release()
+            return True
 
     def _pool_done(self, record: _Request, future: LocalFuture) -> None:
         try:
