@@ -236,5 +236,9 @@ def test_plaintext_tcp_requires_explicit_loopback_opt_in():
         TcpAddress("127.0.0.1", 1)
     with pytest.raises(ValueError, match="addresses are restricted to loopback"):
         TcpAddress("example.com", 443, insecure=True)
+    with pytest.raises(ValueError, match="addresses are restricted to loopback"):
+        TcpAddress("localhost", 443, insecure=True)
     with pytest.raises(ValueError, match="listeners are restricted to loopback"):
         TcpListener("0.0.0.0", 0, insecure=True)
+    with pytest.raises(ValueError, match="listeners are restricted to loopback"):
+        TcpListener("localhost", 0, insecure=True)
