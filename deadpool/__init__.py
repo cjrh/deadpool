@@ -1,6 +1,6 @@
 """A resilient process-pool executor and its optional remote interface."""
 
-__version__ = "2026.6.1"
+__version__ = "2026.7.1"
 
 from . import _pool
 from ._pool import (
