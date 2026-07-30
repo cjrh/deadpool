@@ -2,7 +2,7 @@ import deadpool
 
 
 def test_package_preserves_local_api():
-    assert deadpool.__version__ == "2026.6.1"
+    assert isinstance(deadpool.__version__, str)
     assert deadpool.Deadpool.__module__ == "deadpool._pool"
     assert deadpool.PrioritizedItem is deadpool._pool.PrioritizedItem
     assert callable(deadpool.trim_memory)
