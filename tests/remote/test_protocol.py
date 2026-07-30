@@ -14,6 +14,7 @@ from deadpool.remote._protocol import (
     MessageReader,
     MessageType,
     _json_loads,
+    _send_exact,
     send_message,
     validate_control,
 )
@@ -62,6 +63,35 @@ def test_partial_frame_has_a_bounded_deadline():
         MessageReader(small_limits(partial_frame_timeout=0.02)).receive(receiver)
     sender.close()
     receiver.close()
+
+
+def test_partial_frame_write_has_one_total_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class PartialSendSocket:
+        def __init__(self) -> None:
+            self.sent = 0
+
+        def send(self, data: memoryview) -> int:
+            self.sent += 1
+            return 1
+
+    now = [-0.03]
+
+    def monotonic() -> float:
+        now[0] += 0.03
+        return now[0]
+
+    monkeypatch.setattr("deadpool.remote._protocol.time.monotonic", monotonic)
+    monkeypatch.setattr(
+        "deadpool.remote._protocol.select.select",
+        lambda readable, writable, exceptional, timeout: ([], writable, []),
+    )
+    sock = PartialSendSocket()
+
+    with pytest.raises(TimeoutError, match="remote frame write"):
+        _send_exact(sock, b"slow", timeout=0.05)
+    assert sock.sent < len(b"slow")
 
 
 def test_declared_frame_limit_is_rejected_before_payload_read():

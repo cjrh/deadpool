@@ -399,7 +399,7 @@ def _bounded_timeout(timeout: float, deadline: float | None) -> float:
 
 
 def _send_exact(sock: socket.socket, data: bytes | memoryview, timeout: float) -> None:
-    """Write bytes with a monotonic progress deadline instead of unbounded sendall."""
+    """Write bytes within one monotonic deadline instead of unbounded sendall."""
     view = memoryview(data)
     sent = 0
     deadline = time.monotonic() + timeout
@@ -422,7 +422,6 @@ def _send_exact(sock: socket.socket, data: bytes | memoryview, timeout: float) -
         if count == 0:
             raise EOFError("connection closed during frame write")
         sent += count
-        deadline = time.monotonic() + timeout
 
 
 def _recv_exact(
