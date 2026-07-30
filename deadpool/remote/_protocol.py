@@ -27,6 +27,7 @@ MAJOR = 1
 MINOR = 0
 _PREFIX = struct.Struct("!4sBBBBII")
 _FLAG_CHUNKED = 1
+_MAX_JSON_DEPTH = 12
 _WIRE_LIMIT_FIELDS = (
     "max_control_bytes",
     "max_frame_payload_bytes",
@@ -101,10 +102,36 @@ class _Chunks:
     received: int = 0
 
 
+def _validate_json_nesting(text: str) -> None:
+    """Reject excessive container nesting without recursing in the JSON decoder."""
+    depth = 0
+    in_string = False
+    escaped = False
+    for character in text:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_string = False
+        elif character == '"':
+            in_string = True
+        elif character in "[{":
+            depth += 1
+            # Lexical depth includes the root container, whose semantic depth is zero.
+            if depth > _MAX_JSON_DEPTH + 1:
+                raise RemoteProtocolError("control JSON is too deeply nested")
+        elif character in "]}":
+            depth -= 1
+
+
 def _json_loads(data: bytes, limits: RemoteLimits) -> dict:
     try:
+        text = data.decode("utf-8")
+        _validate_json_nesting(text)
         value = json.loads(
-            data.decode("utf-8"),
+            text,
             object_pairs_hook=_unique_object,
             parse_constant=lambda value: (_ for _ in ()).throw(
                 ValueError(f"non-finite JSON number {value}")
@@ -133,7 +160,7 @@ def _unique_object(items: list[tuple[str, object]]) -> dict:
 
 
 def _validate_json(value: object, limits: RemoteLimits, depth: int = 0) -> None:
-    if depth > 12:
+    if depth > _MAX_JSON_DEPTH:
         raise RemoteProtocolError("control JSON is too deeply nested")
     if isinstance(value, str):
         if len(value.encode("utf-8")) > limits.max_metadata_bytes:

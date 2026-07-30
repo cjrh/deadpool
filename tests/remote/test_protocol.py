@@ -196,6 +196,28 @@ def test_deep_control_json_is_a_typed_protocol_error() -> None:
         _json_loads(payload, small_limits())
 
 
+def test_maximum_json_nesting_is_accepted() -> None:
+    payload = b'{"value":' + b"[" * 12 + b"]" * 12 + b"}"
+    assert _json_loads(payload, small_limits())
+
+
+def test_forbidden_json_nesting_is_rejected_before_decoding(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_if_called(*args: object, **kwargs: object) -> object:
+        raise AssertionError("over-depth JSON reached the recursive decoder")
+
+    monkeypatch.setattr("deadpool.remote._protocol.json.loads", fail_if_called)
+    payload = b'{"escaped":"\\\\","value":' + b"[" * 13 + b"]" * 13 + b"}"
+    with pytest.raises(RemoteProtocolError, match="too deeply nested"):
+        _json_loads(payload, small_limits())
+
+
+def test_json_nesting_check_ignores_delimiters_in_strings() -> None:
+    payload = b'{"value":"' + b"\\\"" + b"[" * 20 + b'"}'
+    assert _json_loads(payload, small_limits()) == {"value": '"' + "[" * 20}
+
+
 def test_json_decoder_recursion_error_is_normalized(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
