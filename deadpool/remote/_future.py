@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import concurrent.futures
+import logging
 import os
 import threading
 import weakref
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 from .errors import RemoteForkedProcessError
 
 if TYPE_CHECKING:
     from .client import DeadpoolClient
+
+logger = logging.getLogger("deadpool.remote")
 
 
 class SubmissionState(str, Enum):
@@ -38,7 +41,7 @@ class RemoteFuture(concurrent.futures.Future):
         self._owner_pid = os.getpid()
         self._client = weakref.ref(client)
         self._state_lock = threading.RLock()
-        self._remote_callbacks: list[object] = []
+        self._remote_callbacks: list[Callable[[RemoteFuture], object]] = []
 
     @property
     def pid(self) -> int | None:
@@ -67,13 +70,20 @@ class RemoteFuture(concurrent.futures.Future):
             return False
         return client._cancel(self, hard=True)
 
-    def add_done_callback(self, fn) -> None:
+    def add_done_callback(self, fn: Callable[[RemoteFuture], object]) -> None:
+        """Register ``fn``, invoking it inline when already terminal.
+
+        Callbacks registered before completion are dispatched on the client's
+        isolated callback executor. Matching the standard Future contract,
+        callbacks registered after completion run synchronously before this
+        method returns.
+        """
         self._check_process()
         with self._state_lock:
             if not self.done():
                 self._remote_callbacks.append(fn)
                 return
-        self._schedule_callback(fn)
+        self._invoke_callback(fn)
 
     def result(self, timeout: float | None = None):
         self._check_process()
@@ -162,16 +172,16 @@ class RemoteFuture(concurrent.futures.Future):
         client = self._client()
         if client is None:
             for callback in callbacks:
-                callback(self)
+                self._invoke_callback(callback)
             return
         client._schedule_callbacks(callbacks, self)
 
-    def _schedule_callback(self, callback) -> None:
-        client = self._client()
-        if client is None:
+    def _invoke_callback(self, callback: Callable[[RemoteFuture], object]) -> None:
+        """Invoke one callback through the shared exception boundary."""
+        try:
             callback(self)
-        else:
-            client._schedule_callback(callback, self)
+        except BaseException:
+            logger.exception("exception calling RemoteFuture callback")
 
     def _check_process(self) -> None:
         if os.getpid() != self._owner_pid:

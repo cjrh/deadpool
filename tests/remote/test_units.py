@@ -41,6 +41,20 @@ def test_scheduler_is_strict_priority_and_principal_fair():
     assert [scheduler.pop() for _ in range(4)] == ["urgent", "a1", "b1", "a2"]
 
 
+def test_scheduler_front_requeue_preserves_fifo_priority_and_fairness():
+    scheduler = FairScheduler()
+    scheduler.put("a1", priority=2, principal="a")
+    scheduler.put("a2", priority=2, principal="a")
+    scheduler.put("b1", priority=2, principal="b")
+
+    rejected = scheduler.pop()
+    assert rejected == "a1"
+    scheduler.put("urgent", priority=1, principal="a")
+    scheduler.put_front(rejected, priority=2, principal="a")
+
+    assert [scheduler.pop() for _ in range(4)] == ["urgent", "b1", "a1", "a2"]
+
+
 def test_scheduler_removal_preserves_other_principals_and_priorities():
     scheduler = FairScheduler()
     scheduler.put("a1", priority=2, principal="a")
@@ -108,13 +122,15 @@ def test_remote_limit_cross_field_relationships(changes, message):
 class CallbackClient:
     def __init__(self):
         self.cancel_calls = 0
+        self.single_callbacks = []
 
     def _schedule_callbacks(self, callbacks, future):
         for callback in callbacks:
             callback(future)
 
     def _schedule_callback(self, callback, future):
-        callback(future)
+        # Model the old asynchronous late-callback path without running it.
+        self.single_callbacks.append((callback, future))
 
     def _cancel(self, future, *, hard):
         self.cancel_calls += 1
@@ -140,6 +156,24 @@ def test_future_terminal_state_and_callbacks_are_idempotent():
     assert future.pid == 123
     assert future.worker_id == "worker:123"
     assert callbacks == ["ok"]
+
+
+def test_future_late_callback_runs_inline_and_logs_errors(caplog):
+    client = CallbackClient()
+    future = RemoteFuture("request:late", client)
+    future._set_result("ok")
+    observed = []
+
+    future.add_done_callback(lambda done: observed.append(done.result()))
+
+    assert observed == ["ok"]
+    assert client.single_callbacks == []
+
+    def broken_callback(done):
+        raise RuntimeError(f"late callback failed for {done.request_id}")
+
+    future.add_done_callback(broken_callback)
+    assert "late callback failed for request:late" in caplog.text
 
 
 def test_future_local_cancellation_never_contacts_server():

@@ -1,7 +1,10 @@
-"""Payload serializers.
+"""Payload serializers for a bidirectional remote execution protocol.
 
-Pickle callable mode is remote code execution by design and is only appropriate
-between mutually trusted, compatible Python processes.
+The default :class:`PickleSerializer` requires mutually trusted clients and
+servers in both callable and registered-task modes. Registered operation
+selection is authorization, not a deserialization sandbox: invocation arguments
+are still unpickled by workers. Results and task exceptions are unpickled by
+clients, establishing the reverse trust relationship as well.
 """
 
 from __future__ import annotations
@@ -9,12 +12,25 @@ from __future__ import annotations
 import pickle
 from typing import Protocol, runtime_checkable
 
+PICKLE_TRUST_WARNING = (
+    "The default PickleSerializer requires mutually trusted clients and servers "
+    "in both callable and registered-task modes: registered operation "
+    "authorization is not a deserialization sandbox, and result/exception "
+    "payloads require clients to trust servers in reverse"
+)
+
 
 class SerializationLimitError(ValueError): ...
 
 
 @runtime_checkable
 class Serializer(Protocol):
+    """Encode invocations and outcomes across the client/server boundary.
+
+    Implementations define their own trust model. The bundled pickle
+    implementation is unsafe for untrusted input in either direction.
+    """
+
     name: str
     protocol_version: str
 
@@ -24,6 +40,13 @@ class Serializer(Protocol):
 
 
 class PickleSerializer:
+    """Serialize protocol payloads with pickle for mutually trusted peers.
+
+    This serializer unpickles callable or registered-task invocation data on
+    the server and result or exception data on the client. Registered task
+    authorization limits callable selection but does not make unpickling safe.
+    """
+
     name = "pickle"
     protocol_version = str(pickle.HIGHEST_PROTOCOL)
 

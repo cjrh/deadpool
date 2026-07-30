@@ -526,6 +526,9 @@ def test_callback_registration_does_not_wait_for_dispatch_capacity(tmp_path):
         third = client.submit(add, 3, 4)
         third.add_done_callback(lambda _: third_callback_finished.set())
         assert third.result(timeout=5) == 7
+        late_callbacks = []
+        third.add_done_callback(lambda _: late_callbacks.append("late"))
+        assert late_callbacks == ["late"]
         assert client.submit(add, 20, 22).result(timeout=5) == 42
         assert client.check_health()
 

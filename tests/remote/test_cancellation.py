@@ -197,6 +197,56 @@ def test_queue_timeout_is_distinct_from_execution_timeout(tmp_path):
         server.shutdown(cancel_futures=True, deadline=5)
 
 
+def test_queue_timeout_survives_saturated_local_backlog(tmp_path):
+    socket_path = tmp_path / "pool.sock"
+    release = tmp_path / "release"
+    running_marker = tmp_path / "running"
+    expired_marker = tmp_path / "expired"
+    server = DeadpoolServer(
+        partial(
+            deadpool.Deadpool,
+            max_workers=1,
+            max_backlog=1,
+            mp_context="forkserver",
+        ),
+        listeners=[UnixListener(socket_path)],
+    ).start()
+    client = DeadpoolClient(UnixAddress(socket_path))
+    pool = server._pool
+    assert pool is not None
+    try:
+        running = pool.submit(
+            wait_then_mark, release, running_marker, "unrelated-running"
+        )
+        wait_until(lambda: running.pid is not None)
+        backlogged = pool.submit(multiply, 6, 7)
+        wait_until(pool.submitted_jobs.full)
+
+        expiring = client.submit(
+            mark,
+            expired_marker,
+            "must-not-run",
+            deadpool_queue_timeout=0.02,
+        )
+        with pytest.raises(RemoteQueueTimeout):
+            expiring.result(timeout=2)
+
+        assert not running.done()
+        assert not expired_marker.exists()
+        assert pool.get_statistics()["tasks_received"] == 2
+        wait_until(lambda: server.get_statistics()["remote_staged"] == 0)
+
+        release.touch()
+        assert running.result(timeout=5) == "unrelated-running"
+        assert backlogged.result(timeout=5) == 42
+        assert client.submit(multiply, 3, 4).result(timeout=5) == 12
+        assert not expired_marker.exists()
+    finally:
+        release.touch(exist_ok=True)
+        client.shutdown(cancel_futures=True)
+        server.shutdown(cancel_futures=True, deadline=5)
+
+
 def test_ordinary_cancel_does_not_kill_running_task(tmp_path):
     socket_path = tmp_path / "pool.sock"
     release = tmp_path / "release"

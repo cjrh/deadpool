@@ -728,12 +728,16 @@ class Deadpool(Executor):
         kwargs: dict,
         timeout,
         priority,
+        *,
+        block: bool = True,
     ) -> Future:
         """Submit using a framework-owned Future.
 
         Remote brokerage uses this narrow private seam to arbitrate queued
-        cancellation against worker dispatch without changing local Future
-        semantics.
+        cancellation against worker dispatch. Its broker lane may request
+        nonblocking admission so remote deadlines remain live when the local
+        backlog is full. Ordinary :meth:`submit` calls retain blocking
+        backpressure.
         """
         if self.closed:
             raise PoolClosed("The pool is closed. No more tasks can be submitted.")
@@ -742,7 +746,8 @@ class Deadpool(Executor):
                 priority=priority,
                 item=(fn, args, kwargs, timeout, fut),
                 sequence=next(self._submission_sequence),
-            )
+            ),
+            block=block,
         )
         self._statistics.tasks_received.increment()
         return fut

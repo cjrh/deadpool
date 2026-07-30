@@ -50,7 +50,7 @@ from .config import (
     UnixListener,
 )
 from .errors import RemoteProtocolError
-from .serializer import PickleSerializer, Serializer
+from .serializer import PICKLE_TRUST_WARNING, PickleSerializer, Serializer
 
 logger = logging.getLogger("deadpool.remote")
 
@@ -222,8 +222,10 @@ class DeadpoolServer:
     """Own a Deadpool and expose it over bounded Unix/TCP connections.
 
     The wire format is private and experimental until a separate stable wire
-    reference is published. Pickle callable mode grants trusted clients code
-    execution as the worker account.
+    reference is published. The default :class:`PickleSerializer` requires
+    mutually trusted clients and servers in callable and registered-task modes;
+    operation authorization is not a deserialization sandbox, and serialized
+    results and exceptions make trust bidirectional.
     """
 
     def __init__(
@@ -248,10 +250,7 @@ class DeadpoolServer:
         self.pool_factory = pool_factory
         self.listeners = list(listeners)
         if serializer is None:
-            logger.warning(
-                "Deadpool remote callable mode uses pickle and grants trusted "
-                "clients code execution as the worker account"
-            )
+            logger.warning(PICKLE_TRUST_WARNING)
         self.serializer = serializer or PickleSerializer()
         self.task_registry = dict(task_registry or {})
         self.registry_fingerprint = registry_fingerprint
@@ -850,7 +849,24 @@ class DeadpoolServer:
                     {},
                     record.execution_timeout,
                     record.priority,
+                    block=False,
                 )
+            except queue.Full:
+                # The broker owns deadline processing, so it must never wait
+                # inside the local pool's backpressure path. Restore the record
+                # ahead of later work in its FIFO stream without changing the
+                # principal's round-robin position, then yield the lane.
+                with self._condition:
+                    record.local_future = None
+                    self._staged -= 1
+                    if record.state == RequestState.ACCEPTED_QUEUED:
+                        self._scheduler.put_front(
+                            record,
+                            priority=record.priority,
+                            principal=record.principal,
+                        )
+                        self._condition.wait(0.01)
+                    self._condition.notify_all()
             except BaseException as error:
                 self._complete_local(record, error)
             else:
@@ -884,6 +900,20 @@ class DeadpoolServer:
         # queue timeout, and dispatch can therefore have exactly one winner.
         self._condition.acquire()
         if record.state != RequestState.ACCEPTED_QUEUED:
+            self._condition.release()
+            return False
+        if (
+            record.queue_deadline is not None
+            and time.monotonic() >= record.queue_deadline
+        ):
+            self._terminal_locked(
+                record,
+                RequestState.QUEUE_TIMED_OUT,
+                MessageType.QUEUE_TIMED_OUT,
+                {"reason": "queue_timeout"},
+            )
+            if record.local_future is not None:
+                record.local_future.cancel()
             self._condition.release()
             return False
         return True

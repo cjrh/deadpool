@@ -25,6 +25,20 @@ class FairScheduler(Generic[T]):
         self._size = 0
 
     def put(self, item: T, *, priority: int, principal: str) -> None:
+        self._put(item, priority=priority, principal=principal, front=False)
+
+    def put_front(self, item: T, *, priority: int, principal: str) -> None:
+        """Restore a popped item ahead of later work in its FIFO stream."""
+        self._put(item, priority=priority, principal=principal, front=True)
+
+    def _put(
+        self,
+        item: T,
+        *,
+        priority: int,
+        principal: str,
+        front: bool,
+    ) -> None:
         bucket = self._priorities.get(priority)
         if bucket is None:
             bucket = self._priorities[priority] = _Priority()
@@ -32,7 +46,10 @@ class FairScheduler(Generic[T]):
         queue = bucket.queued[principal]
         if not queue:
             bucket.principals.append(principal)
-        queue.append(item)
+        if front:
+            queue.appendleft(item)
+        else:
+            queue.append(item)
         self._size += 1
 
     def pop(self) -> T:

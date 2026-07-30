@@ -813,16 +813,22 @@ Client and server wire bounds for control data, frames, messages, metadata, and
 chunk counts must match. The handshake rejects asymmetric wire limits before
 accepting submissions.
 
-``RemoteFuture.add_done_callback()`` follows the standard nonblocking
-registration contract. ``callback_queue_size`` bounds callback batches admitted
-to the callback executor, not application-owned registrations waiting for
-dispatch; callback backpressure never blocks transport or Future state updates.
+``RemoteFuture.add_done_callback()`` follows standard ``Future`` timing:
+callbacks registered after terminal completion run synchronously before the
+method returns, while callbacks registered earlier use the isolated callback
+executor. ``callback_queue_size`` bounds callback batches admitted to that
+executor, not application-owned registrations waiting for dispatch; callback
+backpressure never blocks transport or Future state updates.
 
 .. warning::
 
-   The default pickle callable mode is remote code execution by design. TLS
-   authenticates and encrypts peers; it does not sandbox Python deserialization
-   or worker execution. Only authorize mutually trusted clients.
+   The default ``PickleSerializer`` requires mutually trusted clients and
+   servers in both callable and registered-task modes. TLS authenticates and
+   encrypts peers but does not sandbox deserialization. Registered operation
+   authorization controls callable selection; it is not a deserialization
+   sandbox because workers still unpickle invocation arguments. Clients also
+   unpickle result and exception payloads, establishing reverse trust in the
+   server.
 
 The current framed wire layout is private and experimental because the remote
 executor specification intentionally leaves stable frame octets and canonical

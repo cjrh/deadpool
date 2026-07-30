@@ -2,9 +2,11 @@
 
 Security warning
 ----------------
-Pickle callable mode intentionally executes code supplied by authenticated
-clients. TLS authenticates peers; it does not sandbox Python deserialization or
-execution. Use this package only across a mutually trusted boundary.
+The default PickleSerializer requires mutually trusted clients and servers in
+both callable and registered-task modes. TLS authenticates peers but does not
+sandbox deserialization. Registered operation authorization is not a
+serialization sandbox because workers still unpickle invocation arguments;
+clients likewise unpickle result and exception payloads, creating reverse trust.
 
 The current wire layout is private and versioned but not a stable interoperability
 contract. Session resumption, compression, IPv6, out-of-band pickle buffers,

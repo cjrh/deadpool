@@ -51,13 +51,18 @@ from .errors import (
     RemoteTaskError,
     SubmissionOutcomeUnknown,
 )
-from .serializer import PickleSerializer, Serializer
+from .serializer import PICKLE_TRUST_WARNING, PickleSerializer, Serializer
 
 logger = logging.getLogger("deadpool.remote")
 
 
 class DeadpoolClient(concurrent.futures.Executor):
-    """A process-local client whose submitted work runs in a server-owned pool."""
+    """Submit work to a server-owned pool across a mutually trusted boundary.
+
+    The default :class:`PickleSerializer` is unsafe for untrusted peers in both
+    callable and registered-task modes. Results and exceptions are also pickle
+    payloads, so a client must trust the server just as the server trusts it.
+    """
 
     def __init__(
         self,
@@ -73,10 +78,7 @@ class DeadpoolClient(concurrent.futures.Executor):
     ) -> None:
         self.address = address
         if serializer is None:
-            logger.warning(
-                "Deadpool remote callable mode uses pickle and grants trusted "
-                "clients code execution as the worker account"
-            )
+            logger.warning(PICKLE_TRUST_WARNING)
         self.serializer = serializer or PickleSerializer()
         self.authenticator = authenticator
         self.application_fingerprint = application_fingerprint
@@ -712,10 +714,7 @@ class DeadpoolClient(concurrent.futures.Executor):
             except RuntimeError:
                 self._callback_slots.release()
                 for callback in callbacks:
-                    _call_callback(callback, future)
-
-    def _schedule_callback(self, callback, future: RemoteFuture) -> None:
-        self._schedule_callbacks([callback], future)
+                    future._invoke_callback(callback)
 
     def _schedule_callbacks(self, callbacks: list, future: RemoteFuture) -> None:
         with self._lock:
@@ -723,7 +722,7 @@ class DeadpoolClient(concurrent.futures.Executor):
                 self._callback_dispatch_queue.put((callbacks, future))
                 return
         for callback in callbacks:
-            _call_callback(callback, future)
+            future._invoke_callback(callback)
 
     def _ensure_process(self) -> None:
         if os.getpid() == self._owner_pid:
@@ -908,18 +907,7 @@ def _run_callback_batch(
 ) -> None:
     semaphore.release()
     for callback in callbacks:
-        _call_callback(callback, future)
-
-
-def _call_callback(callback, future: RemoteFuture) -> None:
-    try:
-        callback(future)
-    except BaseException:
-        import logging
-
-        logging.getLogger("deadpool.remote").exception(
-            "exception calling RemoteFuture callback"
-        )
+        future._invoke_callback(callback)
 
 
 def _deadpool_version() -> str:
