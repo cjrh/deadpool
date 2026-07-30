@@ -20,6 +20,7 @@ from deadpool.remote import (
     RemoteExecutorUnavailable,
     RemoteLimits,
     RemoteProcessError,
+    RemoteProtocolError,
     RemoteQueueFull,
     RemoteResultTooLarge,
     ServerState,
@@ -91,6 +92,67 @@ class BlockingSerializer(PickleSerializer):
         if not self.release.wait(5):
             raise TimeoutError("serializer test barrier was not released")
         return super().dumps(value, limit=limit)
+
+
+class RejectingResultSerializer(PickleSerializer):
+    """Model a result whose Python type is unavailable on the client."""
+
+    def loads(self, payload: bytes) -> object:
+        value = super().loads(payload)
+        if value == "unavailable-client-type":
+            raise ModuleNotFoundError("client cannot import result type")
+        return value
+
+
+def test_result_decode_failure_acknowledges_and_forgets_request(tmp_path: Path) -> None:
+    path = tmp_path / "pool.sock"
+    server = DeadpoolServer(
+        partial(deadpool.Deadpool, max_workers=1, mp_context="forkserver"),
+        listeners=[UnixListener(path)],
+    ).start()
+    client = DeadpoolClient(UnixAddress(path), serializer=RejectingResultSerializer())
+    try:
+        future = client.submit(delayed, "unavailable-client-type", 0)
+        with pytest.raises(RemoteProtocolError, match="cannot import result type"):
+            future.result(5)
+
+        wait_until(lambda: server.get_statistics()["remote_retained_outcomes"] == 0)
+        assert future.request_id not in client._futures
+        assert future.request_id not in client._terminal_received
+        assert client.check_health()
+    finally:
+        client.shutdown(cancel_futures=True)
+        server.shutdown(cancel_futures=True, deadline=5)
+
+
+def test_result_ack_enqueue_failure_closes_session_and_forgets_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    server, client = make_pair(tmp_path / "pool.sock")
+    release = tmp_path / "release"
+    marker = tmp_path / "marker"
+    future = client.submit(wait_then_mark, release, marker, "done")
+    original_enqueue = client._enqueue_control
+
+    def reject_result_ack(kind: MessageType, control: dict) -> None:
+        if kind == MessageType.RESULT_ACK:
+            raise RemoteConnectionLost("client outbound control queue is full")
+        original_enqueue(kind, control)
+
+    try:
+        wait_until(future.running)
+        monkeypatch.setattr(client, "_enqueue_control", reject_result_ack)
+        release.touch()
+        assert future.result(5) == "done"
+
+        wait_until(lambda: client._socket is None)
+        wait_until(lambda: server.get_statistics()["remote_retained_outcomes"] == 0)
+        assert future.request_id not in client._futures
+        assert future.request_id not in client._terminal_received
+    finally:
+        release.touch(exist_ok=True)
+        client.shutdown(cancel_futures=True)
+        server.shutdown(cancel_futures=True, deadline=5)
 
 
 def test_submit_rechecks_shutdown_after_serialization(tmp_path: Path) -> None:
@@ -185,6 +247,9 @@ def test_rpc_response_claims_token_before_following_disconnect(
             return self.release_waiter.wait(timeout)
 
     class SocketStub:
+        def shutdown(self, how: int) -> None:
+            pass
+
         def close(self) -> None:
             pass
 

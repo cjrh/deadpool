@@ -416,7 +416,6 @@ class DeadpoolClient(concurrent.futures.Executor):
             self._connection_lost(RemoteProtocolError(str(message.control)))
 
     def _complete(self, future: RemoteFuture, message: Message) -> None:
-        acknowledge = False
         try:
             if message.kind == MessageType.RESULT:
                 future._set_result(self.serializer.loads(message.payload))
@@ -471,7 +470,6 @@ class DeadpoolClient(concurrent.futures.Executor):
                         request_id=future.request_id,
                     )
                 )
-            acknowledge = True
         except BaseException as error:
             future._set_exception(
                 error
@@ -479,15 +477,18 @@ class DeadpoolClient(concurrent.futures.Executor):
                 else RemoteProtocolError(str(error), request_id=future.request_id)
             )
         finally:
-            if acknowledge:
-                try:
-                    self._enqueue_control(
-                        MessageType.RESULT_ACK, {"request_id": future.request_id}
-                    )
-                finally:
-                    self._forget(future)
-                    with self._lock:
-                        self._terminal_received.discard(future.request_id)
+            try:
+                self._enqueue_control(
+                    MessageType.RESULT_ACK, {"request_id": future.request_id}
+                )
+            except RemoteConnectionLost as error:
+                # An unqueued acknowledgement cannot release the server-owned
+                # reservation; closing the session makes teardown release it.
+                self._connection_lost(error)
+            finally:
+                self._forget(future)
+                with self._lock:
+                    self._terminal_received.discard(future.request_id)
 
     def _reject(self, future: RemoteFuture, control: dict) -> None:
         reason = control.get("reason", "rejected")
@@ -629,6 +630,10 @@ class DeadpoolClient(concurrent.futures.Executor):
             rpc = list(self._rpc.values())
             self._rpc.clear()
         if sock is not None:
+            try:
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
             try:
                 sock.close()
             except OSError:
