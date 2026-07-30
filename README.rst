@@ -820,6 +820,12 @@ executor. ``callback_queue_size`` bounds callback batches admitted to that
 executor, not application-owned registrations waiting for dispatch; callback
 backpressure never blocks transport or Future state updates.
 
+Remote cancellation requires an authoritative broker decision. Unlike a local
+``Future.cancel()``, cancelling submitted work may therefore block up to the
+client's ``control_timeout`` or raise ``RemoteCancellationOutcomeUnknown`` when
+the distributed outcome cannot be determined. Work still in the client's local
+submission stage cancels immediately.
+
 .. warning::
 
    The default ``PickleSerializer`` requires mutually trusted clients and

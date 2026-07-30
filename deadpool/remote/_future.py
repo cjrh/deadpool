@@ -49,6 +49,12 @@ class RemoteFuture(concurrent.futures.Future):
         return self._pid
 
     def cancel(self) -> bool:
+        """Request an authoritative cancellation decision from the broker.
+
+        Locally pending work cancels immediately. Once submitted, this call may
+        block up to the client's control timeout or raise when the distributed
+        cancellation outcome cannot be determined.
+        """
         self._check_process()
         with self._state_lock:
             if self.done():
