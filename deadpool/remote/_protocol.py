@@ -269,6 +269,7 @@ class MessageReader:
     def __init__(self, limits: RemoteLimits) -> None:
         self.limits = limits
         self._messages: dict[str, _Chunks] = {}
+        self._incomplete_bytes = 0
 
     def receive(
         self,
@@ -371,14 +372,18 @@ class MessageReader:
             raise RemoteProtocolError("conflicting chunk metadata")
         if index != state.next_index:
             raise RemoteProtocolError("duplicate or out-of-order chunk")
+        if self._incomplete_bytes + len(payload) > self.limits.max_message_bytes:
+            raise RemoteProtocolError("aggregate incomplete payload is too large")
         state.parts.append(payload)
         state.received += len(payload)
+        self._incomplete_bytes += len(payload)
         state.next_index += 1
         if state.received > state.total:
             raise RemoteProtocolError("chunk sequence exceeds declared total")
         if index + 1 != count:
             return None
         del self._messages[message_id]
+        self._incomplete_bytes -= state.received
         if state.received != state.total:
             raise RemoteProtocolError(
                 "chunk sequence length does not match declared total"

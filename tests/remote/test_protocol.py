@@ -217,6 +217,57 @@ def test_chunk_state_bounds_incomplete_messages_and_conflicting_metadata():
     assert completed == Message(MessageType.RESULT, {}, b"xx")
 
 
+def test_chunk_state_bounds_aggregate_incomplete_payload_bytes() -> None:
+    limits = small_limits(
+        max_frame_payload_bytes=2,
+        max_message_bytes=4,
+        max_invocation_bytes=4,
+        max_result_bytes=4,
+        max_chunks=2,
+        max_incomplete_messages=4,
+    )
+    digest = hashlib.sha256(b"xxxx").hexdigest()
+    reader = MessageReader(limits)
+    for message_id in ("first", "second"):
+        assert (
+            reader._accept(
+                MessageType.RESULT,
+                chunk_header(
+                    message_id=message_id, count=2, total=4, digest=digest
+                ),
+                b"xx",
+            )
+            is None
+        )
+
+    with pytest.raises(RemoteProtocolError, match="aggregate incomplete payload"):
+        reader._accept(
+            MessageType.RESULT,
+            chunk_header(message_id="third", count=2, total=4, digest=digest),
+            b"x",
+        )
+
+    completing = MessageReader(limits)
+    assert completing._accept(
+        MessageType.RESULT,
+        chunk_header(message_id="complete", count=2, total=4, digest=digest),
+        b"xx",
+    ) is None
+    assert completing._accept(
+        MessageType.RESULT,
+        chunk_header(
+            message_id="complete",
+            index=1,
+            count=2,
+            total=4,
+            digest=digest,
+            control=None,
+        ),
+        b"xx",
+    ) == Message(MessageType.RESULT, {}, b"xxxx")
+    assert completing._incomplete_bytes == 0
+
+
 def test_oversized_outbound_message_is_rejected_before_socket_io():
     class NoIoSocket:
         def send(self, data):
