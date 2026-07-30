@@ -249,9 +249,7 @@ def test_chunk_state_bounds_aggregate_incomplete_payload_bytes() -> None:
         assert (
             reader._accept(
                 MessageType.RESULT,
-                chunk_header(
-                    message_id=message_id, count=2, total=4, digest=digest
-                ),
+                chunk_header(message_id=message_id, count=2, total=4, digest=digest),
                 b"xx",
             )
             is None
@@ -265,11 +263,14 @@ def test_chunk_state_bounds_aggregate_incomplete_payload_bytes() -> None:
         )
 
     completing = MessageReader(limits)
-    assert completing._accept(
-        MessageType.RESULT,
-        chunk_header(message_id="complete", count=2, total=4, digest=digest),
-        b"xx",
-    ) is None
+    assert (
+        completing._accept(
+            MessageType.RESULT,
+            chunk_header(message_id="complete", count=2, total=4, digest=digest),
+            b"xx",
+        )
+        is None
+    )
     assert completing._accept(
         MessageType.RESULT,
         chunk_header(

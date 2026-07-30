@@ -134,9 +134,7 @@ def test_worker_pipe_write_does_not_hold_broker_lock(
     try:
         assert entered.wait(2)
         queued = client.submit(multiply, 6, 7)
-        wait_until(
-            lambda: queued.submission_state is SubmissionState.ACCEPTED_QUEUED
-        )
+        wait_until(lambda: queued.submission_state is SubmissionState.ACCEPTED_QUEUED)
         assert future.cancel_and_kill_if_running()
         release.set()
 

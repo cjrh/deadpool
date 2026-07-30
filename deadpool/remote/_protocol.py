@@ -110,7 +110,12 @@ def _json_loads(data: bytes, limits: RemoteLimits) -> dict:
                 ValueError(f"non-finite JSON number {value}")
             ),
         )
-    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError, ValueError) as error:
+    except (
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        RecursionError,
+        ValueError,
+    ) as error:
         raise RemoteProtocolError(f"invalid control JSON: {error}") from error
     _validate_json(value, limits)
     if not isinstance(value, dict):
