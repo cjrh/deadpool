@@ -214,7 +214,7 @@ def test_forbidden_json_nesting_is_rejected_before_decoding(
 
 
 def test_json_nesting_check_ignores_delimiters_in_strings() -> None:
-    payload = b'{"value":"' + b"\\\"" + b"[" * 20 + b'"}'
+    payload = b'{"value":"' + b'\\"' + b"[" * 20 + b'"}'
     assert _json_loads(payload, small_limits()) == {"value": '"' + "[" * 20}
 
 
