@@ -27,7 +27,7 @@ jobs:
 
     steps:
     - name: Harden Runner
-      uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v1
+      uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v1
       with:
         egress-policy: block
         disable-telemetry: true
@@ -48,7 +48,7 @@ jobs:
       with:
         fetch-depth: 0
 
-    - uses: psf/black@87928e6d6761a4a6d22250e1fee5601b3998086e # stable
+    - uses: psf/black@4f1883b1f15305a0e83a7c87991f46292bf09f85 # stable
 
   dependency-scan:
     permissions:
@@ -59,7 +59,7 @@ jobs:
 
     steps:
     - name: Harden Runner
-      uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1
+      uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed
       with:
         egress-policy: block
         allowed-endpoints: >
@@ -119,7 +119,7 @@ jobs:
 
     steps:
     - name: Harden Runner
-      uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1
+      uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed
       with:
         egress-policy: audit # TODO: change to 'egress-policy: block' after couple of runs
 
@@ -148,7 +148,7 @@ jobs:
 
     steps:
     - name: Harden Runner
-      uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+      uses: step-security/harden-runner@351661ca32ac09a36dc5ee2d536e3128f2a3c8ed # v2.22.0
       with:
         egress-policy: audit # TODO: change to 'egress-policy: block' after couple of runs
 
